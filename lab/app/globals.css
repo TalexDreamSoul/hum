@@ -1,0 +1,44 @@
+/* hum·lab —— 只保留三样：版心容器、文档页排版、图表配色变量。
+   组件一律用 Kumo 组件与其自带工具类，不手写组件样式。 */
+
+:root {
+  color-scheme: light dark;
+  /* 图表分类色：与 hum 主站同一套、双模式均通过 CVD 校验 */
+  --c1: light-dark(#2a78d6, #3987e5);
+  --c2: light-dark(#eb6834, #d95926);
+  --c3: light-dark(#1baf7a, #199e70);
+  --c4: light-dark(#eda100, #c98500);
+  --chart-line: light-dark(#e3e3df, #2c2c29);
+  --good: var(--c3);
+  --warn: var(--c4);
+  --bad: light-dark(#e34948, #e66767);
+}
+
+/* 公共内容页版心与排版；认证页和后台完全交给 Kumo。 */
+.wrap {
+  max-width: 64rem;
+  margin: 0 auto;
+  padding-left: 1.25rem;
+  padding-right: 1.25rem;
+  font-family: -apple-system, BlinkMacSystemFont, "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", system-ui, sans-serif;
+  line-height: 1.7;
+}
+
+.wrap h1 { font-size: 1.6rem; line-height: 1.35; letter-spacing: -0.01em; font-weight: 650; margin: 0; }
+.wrap h2 { font-size: 1.05rem; font-weight: 600; margin: 0; }
+.wrap h3 { font-size: 0.92rem; font-weight: 600; margin: 0; }
+
+/* 文档页（评分原理）长文排版 */
+.prose { max-width: 44rem; }
+.prose h2 { margin: 2.6rem 0 0.6rem; font-size: 1.2rem; }
+.prose h3 { margin: 1.8rem 0 0.4rem; font-size: 1rem; }
+.prose p { margin: 0 0 0.9rem; }
+.prose table { border-collapse: collapse; width: 100%; font-size: 0.875rem; margin: 1rem 0; }
+.prose th, .prose td { text-align: left; padding: 0.5rem 0.7rem; vertical-align: top; }
+
+svg { display: block; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "hum",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.34.4",
+  "scripts": {
+    "dev": "pnpm --filter hum-lab dev",
+    "build": "pnpm --filter hum-lab build",
+    "start": "pnpm --filter hum-lab start"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["better-sqlite3", "sharp"]
+  }
+}

@@ -1,0 +1,43 @@
+services:
+  app:
+    image: ${HUM_IMAGE:-hum:local}
+    build:
+      context: .
+    environment:
+      DATABASE_URL: postgresql://hum:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/hum
+      HUM_DATA_DIR: /data
+      NODE_ENV: production
+      PORT: "3000"
+    ports:
+      - "${HUM_PORT:-3000}:3000"
+    volumes:
+      - hum-data:/data
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/setup').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    restart: unless-stopped
+
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: hum
+      POSTGRES_USER: hum
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - hum-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hum -d hum"]
+      interval: 2s
+      timeout: 3s
+      retries: 15
+    restart: unless-stopped
+
+volumes:
+  hum-data:
+  hum-postgres-data:
