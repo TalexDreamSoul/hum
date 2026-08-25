@@ -13,8 +13,12 @@ export const NOTIFICATION_EVENTS = [
   "report.high_score",
   "report.failed",
   "report.completed",
+  "audio.test",
 ] as const;
 export type NotificationEvent = typeof NOTIFICATION_EVENTS[number];
+
+export const NOTIFICATION_TEMPLATE_KEYS = ["production_progress", "audio_review", "daily_summary"] as const;
+export type NotificationTemplateKey = typeof NOTIFICATION_TEMPLATE_KEYS[number];
 
 export interface NotificationPayload {
   title: string;
@@ -25,6 +29,7 @@ export interface NotificationPayload {
   model?: string;
   subjectId?: string;
   path?: string;
+  audioPath?: string;
   channelId?: string;
 }
 
@@ -42,24 +47,49 @@ function safeText(value: unknown, limit = 300): string {
   return String(value ?? "").replace(/[\u0000-\u001f]/g, " ").trim().slice(0, limit);
 }
 
-function cardFor(payload: NotificationPayload, publicUrl: string) {
+function notificationTemplate(value: string): NotificationTemplateKey {
+  try {
+    const parsed = JSON.parse(value) as { templateKey?: unknown };
+    return typeof parsed.templateKey === "string" && NOTIFICATION_TEMPLATE_KEYS.includes(parsed.templateKey as NotificationTemplateKey)
+      ? parsed.templateKey as NotificationTemplateKey
+      : "production_progress";
+  } catch {
+    return "production_progress";
+  }
+}
+
+function cardFor(payload: NotificationPayload, publicUrl: string, templateKey: NotificationTemplateKey) {
+  const template = {
+    production_progress: { prefix: "生产进度", action: "打开后台" },
+    audio_review: { prefix: "音频质检", action: "查看音频" },
+    daily_summary: { prefix: "每日产出", action: "查看今日任务" },
+  }[templateKey];
   const lines = [
     `**状态**：${safeText(payload.status, 80)}`,
     payload.score === undefined ? "" : `**评分**：${payload.score ?? "—"}${payload.grade ? ` / ${safeText(payload.grade, 20)}` : ""}`,
     payload.model ? `**模型**：${safeText(payload.model, 100)}` : "",
     payload.detail ? `**详情**：${safeText(payload.detail, 500)}` : "",
   ].filter(Boolean);
-  const path = payload.path?.startsWith("/") ? payload.path : "";
-  const url = path && publicUrl ? `${publicUrl.replace(/\/+$/, "")}${path}` : "";
+  const absoluteUrl = (value?: string) => value?.startsWith("/") && publicUrl
+    ? `${publicUrl.replace(/\/+$/, "")}${value}`
+    : "";
+  const pathUrl = absoluteUrl(payload.path);
+  const audioUrl = absoluteUrl(payload.audioPath);
+  const actions = [
+    ...(audioUrl ? [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "试听测试音频" }, url: audioUrl }] : []),
+    ...(pathUrl ? [{ tag: "button", type: audioUrl ? "default" : "primary", text: { tag: "plain_text", content: template.action }, url: pathUrl }] : []),
+  ];
   return {
     config: { wide_screen_mode: true },
     header: {
-      template: payload.status.includes("失败") || payload.status.includes("不合格") ? "red" : payload.status.includes("待") ? "orange" : "blue",
-      title: { tag: "plain_text", content: safeText(payload.title, 120) },
+      template: payload.status.includes("失败") || payload.status.includes("不合格")
+        ? "red"
+        : payload.status.includes("待") ? "orange" : templateKey === "audio_review" ? "green" : "blue",
+      title: { tag: "plain_text", content: safeText(`${template.prefix}｜${payload.title}`, 120) },
     },
     elements: [
       { tag: "markdown", content: lines.join("\n") },
-      ...(url ? [{ tag: "action", actions: [{ tag: "button", type: "primary", text: { tag: "plain_text", content: "打开后台" }, url }] }] : []),
+      ...(actions.length ? [{ tag: "action", actions }] : []),
     ],
   };
 }
@@ -80,7 +110,7 @@ async function tenantAccessToken(): Promise<string> {
 
 async function deliver(channel: NotificationChannelRow, payload: NotificationPayload): Promise<{ status: number; summary: string }> {
   const settings = await getProviderSettings();
-  const card = cardFor(payload, settings.publicUrl);
+  const card = cardFor(payload, settings.publicUrl, notificationTemplate(channel.config_json));
   if (channel.channel_type === "feishu_app") {
     const token = await tenantAccessToken();
     const response = await fetch("https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id", {
@@ -115,14 +145,18 @@ async function deliver(channel: NotificationChannelRow, payload: NotificationPay
 }
 
 export async function listNotificationChannels() {
-  return getDb().prepare(`
-    SELECT c.id, c.name, c.channel_type AS channelType, c.target, c.enabled,
-           c.created_at AS createdAt, c.updated_at AS updatedAt,
+  const rows = await getDb().prepare(`
+    SELECT c.id, c.name, c.channel_type AS "channelType", c.target, c.enabled, c.config_json AS "configJson",
+           c.created_at AS "createdAt", c.updated_at AS "updatedAt",
            COALESCE(string_agg(r.event_type, ',' ORDER BY r.event_type) FILTER (WHERE r.enabled = 1), '') AS events
     FROM notification_channels c
     LEFT JOIN notification_rules r ON r.channel_id = c.id
     GROUP BY c.id ORDER BY c.updated_at DESC
-  `).all();
+  `).all<Array<{
+    id: string; name: string; channelType: string; target: string; enabled: number; configJson: string;
+    createdAt: number; updatedAt: number; events: string;
+  }>[number]>();
+  return rows.map(({ configJson, ...row }) => ({ ...row, templateKey: notificationTemplate(configJson) }));
 }
 
 export async function createNotificationChannel(input: {
@@ -131,12 +165,16 @@ export async function createNotificationChannel(input: {
   chatId?: string;
   webhookUrl?: string;
   signingSecret?: string;
+  templateKey?: NotificationTemplateKey;
   events: NotificationEvent[];
 }, userId: string) {
   const name = input.name.trim();
   if (!name || name.length > 120) throw new ApiError(400, "通知渠道名称需为 1–120 个字符");
   const events = [...new Set(input.events)].filter((event): event is NotificationEvent => NOTIFICATION_EVENTS.includes(event));
   if (!events.length) throw new ApiError(400, "至少选择一个通知事件");
+  const templateKey = input.templateKey && NOTIFICATION_TEMPLATE_KEYS.includes(input.templateKey)
+    ? input.templateKey
+    : "production_progress";
   const id = randomUUID();
   const now = Date.now();
   let target = "";
@@ -163,8 +201,8 @@ export async function createNotificationChannel(input: {
     await transaction.prepare(`
       INSERT INTO notification_channels (
         id, name, channel_type, target, secret_encrypted, config_json, enabled, created_by, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, '{}', 1, ?, ?, ?)
-    `).run(id, name, input.channelType, target, encrypted, userId, now, now);
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?, ?)
+    `).run(id, name, input.channelType, target, encrypted, JSON.stringify({ templateKey }), userId, now, now);
     for (const event of events) {
       await transaction.prepare(`
         INSERT INTO notification_rules (id, channel_id, event_type, filter_json, enabled, created_by, created_at)
@@ -257,14 +295,23 @@ export async function dispatchPendingNotifications(limit = 20): Promise<void> {
   }
 }
 
-export async function testNotificationChannel(id: string): Promise<void> {
-  const database = getDb();
-  await enqueueNotificationEvent(database, `notification-test:${id}:${Date.now()}`, "job.completed", {
-    title: "hum 飞书通知测试",
-    status: "测试成功",
-    detail: "群消息、卡片和后台链接配置可用。",
-    path: "/console/notifications",
+export async function testNotificationChannel(id: string, audioAssetId?: string): Promise<void> {
+  if (audioAssetId) {
+    const asset = await getDb().prepare("SELECT media_kind FROM media_assets WHERE id = ?").get<{ media_kind: string }>(audioAssetId);
+    if (!asset) throw new ApiError(404, "测试音频资产不存在");
+    if (asset.media_kind !== "audio") throw new ApiError(400, "只能向飞书推送音频资产");
+  }
+  const eventType: NotificationEvent = audioAssetId ? "audio.test" : "job.completed";
+  const eventKey = `notification-test:${id}:${audioAssetId ?? "channel"}:${Date.now()}`;
+  await enqueueNotificationEvent(getDb(), eventKey, eventType, {
+    title: audioAssetId ? "测试音频待试听" : "hum 飞书通知测试",
+    status: audioAssetId ? "待试听" : "测试成功",
+    detail: audioAssetId ? "点击卡片中的试听按钮播放本次测试音频。" : "群消息、卡片和后台链接配置可用。",
+    path: audioAssetId ? `/console/media?asset=${encodeURIComponent(audioAssetId)}` : "/console/notifications",
+    audioPath: audioAssetId ? `/api/admin/media/${encodeURIComponent(audioAssetId)}/download` : undefined,
     channelId: id,
   });
   await dispatchPendingNotifications();
+  const result = await getDb().prepare("SELECT status, error FROM notification_outbox WHERE event_key = ?").get<{ status: string; error: string }>(eventKey);
+  if (result?.status !== "delivered") throw new ApiError(502, result?.error || "飞书通知没有完成投递");
 }

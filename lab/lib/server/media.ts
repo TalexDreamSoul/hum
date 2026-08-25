@@ -1199,6 +1199,38 @@ export async function getMediaAssetPreview(id: string): Promise<MediaPreview> {
   return { type: "redirect", url: await createQiniuObjectUrl(asset.objectKey) };
 }
 
+export async function getMediaAssetDownload(
+  id: string,
+  clip?: { startMs: number; endMs: number },
+): Promise<{ url: string; filename: string }> {
+  const asset = mapAsset(await findAssetRow(id));
+  if (asset.storageProvider !== "qiniu") {
+    throw new ApiError(409, "当前媒体资产没有可下载的文件正文");
+  }
+  if (!isQiniuObjectKeyInNamespace(asset.objectKey, (await getProviderSettings()).qiniu.prefix)) {
+    throw new ApiError(403, "媒体对象不在受控七牛命名空间内");
+  }
+  if (!clip) {
+    return {
+      url: await createQiniuObjectUrl(asset.objectKey, 15 * 60, `attname=${encodeURIComponent(asset.originalName)}`),
+      filename: asset.originalName,
+    };
+  }
+  if (!isVideoKind(asset.mediaKind)) throw new ApiError(400, "只有视频或录屏支持切片下载");
+  if (!Number.isInteger(clip.startMs) || !Number.isInteger(clip.endMs) || clip.startMs < 0 || clip.endMs <= clip.startMs) {
+    throw new ApiError(400, "切片结束时间必须晚于开始时间");
+  }
+  if (asset.durationMs && clip.endMs > asset.durationMs) throw new ApiError(400, "切片结束时间不能超过视频时长");
+  const seconds = (milliseconds: number) => (milliseconds / 1000).toFixed(3).replace(/\.?0+$/, "");
+  const stem = asset.originalName.replace(/\.[^.]+$/, "").slice(0, 180) || "hum-video";
+  const filename = `${stem}-${seconds(clip.startMs)}-${seconds(clip.endMs)}.mp4`;
+  const operation = `avthumb/mp4/ss/${seconds(clip.startMs)}/t/${seconds(clip.endMs - clip.startMs)}&attname=${encodeURIComponent(filename)}`;
+  return {
+    url: await createQiniuObjectUrl(asset.objectKey, 15 * 60, operation),
+    filename,
+  };
+}
+
 export async function getSongMediaPreview(songId: string): Promise<MediaPreview> {
   return getMediaAssetPreview(await ensureSongMediaAsset(songId));
 }

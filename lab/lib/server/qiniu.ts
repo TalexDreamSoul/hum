@@ -99,18 +99,26 @@ export async function createQiniuUploadGrant(file: { name: string; size: number;
   };
 }
 
-export async function createQiniuObjectUrl(objectKey: string, lifetimeSeconds = 900): Promise<string> {
+export async function createQiniuObjectUrl(
+  objectKey: string,
+  lifetimeSeconds = 900,
+  operation = "",
+): Promise<string> {
   const settings = await getProviderSettings();
   if (!await isQiniuReady(settings)) throw new Error("七牛尚未在后台配置完成");
   if (!isQiniuObjectKeyInNamespace(objectKey, settings.qiniu.prefix)) {
     throw new Error("七牛对象不在受控命名空间内");
   }
+  if (operation && !/^[a-z0-9%&=./_-]+$/i.test(operation)) {
+    throw new Error("七牛处理指令包含非法字符");
+  }
   const domain = normalizedDomain(settings.qiniu.domain);
   const encodedKey = objectKey.split("/").map(encodeURIComponent).join("/");
   const baseUrl = `${domain}/${encodedKey}`;
-  if (!settings.qiniu.privateBucket) return baseUrl;
+  const operationQuery = operation ? `?${operation}` : "";
+  if (!settings.qiniu.privateBucket) return `${baseUrl}${operationQuery}`;
   const deadline = Math.floor(Date.now() / 1000) + lifetimeSeconds;
-  const urlToSign = `${baseUrl}?e=${deadline}`;
+  const urlToSign = `${baseUrl}${operationQuery}${operation ? "&" : "?"}e=${deadline}`;
   const token = `${settings.qiniu.accessKey}:${qiniuSign(urlToSign, settings.qiniu.secretKey)}`;
   return `${urlToSign}&token=${encodeURIComponent(token)}`;
 }

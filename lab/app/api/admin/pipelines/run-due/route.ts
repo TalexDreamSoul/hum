@@ -1,11 +1,8 @@
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
 import { apiErrorResponse, requireApiUser } from "@/lib/server/api";
-import {
-  executePipelinePlan,
-  listRunnablePipelinePlanIds,
-  runDuePipelineSchedules,
-} from "@/lib/server/pipelines";
+import { executePipelinePlan } from "@/lib/server/pipelines";
+import { collectPipelineSchedulerWork } from "@/lib/server/pipeline-scheduler";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,9 +14,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireApiUser(["admin"]);
     const input = inputSchema.parse(await request.json().catch(() => ({})));
-    const createdPlanIds = await runDuePipelineSchedules(user.id, input.limit);
-    const runnableIds = await listRunnablePipelinePlanIds(input.limit);
-    const planIds = [...new Set([...createdPlanIds, ...runnableIds])];
+    const { createdPlanIds, planIds } = await collectPipelineSchedulerWork(user.id, input.limit);
     after(async () => {
       await Promise.all(planIds.map((planId) => executePipelinePlan(planId).catch(() => undefined)));
     });

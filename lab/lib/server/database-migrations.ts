@@ -1194,4 +1194,24 @@ DROP INDEX IF EXISTS media_assets_hash_unique;
 CREATE INDEX IF NOT EXISTS media_assets_owner_content_hash_idx ON media_assets(uploaded_by, content_hash) WHERE content_hash <> '' AND uploaded_by IS NOT NULL;
 `,
   },
+  {
+    version: 7,
+    name: "knowledge-subject-classification",
+    sql: `
+INSERT INTO knowledge_domains (id, parent_id, slug, name, description, status, revision, created_at, updated_at) VALUES
+  ('seed-domain-math-number', 'seed-domain-math', 'math-number-sense', '数感与计数', '数序、数量对应、大小比较与估算', 'published', 1, 0, 0),
+  ('seed-domain-math-operations', 'seed-domain-math', 'math-operations', '运算与规律', '加减启蒙、分合、模式与序列', 'published', 1, 0, 0),
+  ('seed-domain-math-geometry', 'seed-domain-math', 'math-geometry', '图形与空间', '平面图形、立体图形、方位与测量', 'published', 1, 0, 0),
+  ('seed-domain-english-listening', 'seed-domain-english', 'english-listening', '听力与表达', '问候、指令、日常对话与情景表达', 'published', 1, 0, 0),
+  ('seed-domain-english-vocabulary', 'seed-domain-english', 'english-vocabulary', '主题词汇', '颜色、动物、家庭、食物与动作词', 'published', 1, 0, 0),
+  ('seed-domain-english-phonics', 'seed-domain-english', 'english-phonics', '自然拼读', '字母音、首音、韵脚与常见拼读组合', 'published', 1, 0, 0),
+  ('seed-domain-science-nature', 'seed-domain-science', 'science-nature', '自然与生命', '天气、动物、植物、人体与生命周期', 'published', 1, 0, 0),
+  ('seed-domain-science-physics', 'seed-domain-science', 'science-physics', '物质与现象', '光、声、力、材料与基础因果', 'published', 1, 0, 0),
+  ('seed-domain-life-safety', 'seed-domain-life', 'life-safety', '安全与规则', '交通、居家、公共场所与求助规则', 'published', 1, 0, 0),
+  ('seed-domain-life-health', 'seed-domain-life', 'life-health', '健康与自理', '清洁、饮食、作息、穿衣与整理', 'published', 1, 0, 0),
+  ('seed-domain-nursery-rhythm', 'seed-domain-nursery', 'nursery-rhythm', '节奏与韵律', '节拍、押韵、模仿与接唱', 'published', 1, 0, 0),
+  ('seed-domain-nursery-emotion', 'seed-domain-nursery', 'nursery-emotion', '情绪与社交', '情绪命名、同理、合作与礼貌表达', 'published', 1, 0, 0)
+ON CONFLICT(id) DO NOTHING;
+`,
+  },
 ];

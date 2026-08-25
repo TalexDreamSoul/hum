@@ -121,8 +121,8 @@ export function MediaWorkspace({
   const [search, setSearch] = useState("");
   const [uploadKind, setUploadKind] = useState<UploadKind>("auto");
   const [scene, setScene] = useState<ThemeScene>("general");
-  const [pendingFile, setPendingFile] = useState<File | null>(null);
-  const [uploadProgress, setUploadProgress] = useState<number | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<File[]>([]);
+  const [uploadProgress, setUploadProgress] = useState<{ current: number; total: number; percent: number } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [detail, setDetail] = useState<AssetDetail | null>(null);
   const [reviewKind, setReviewKind] = useState<ReviewKind>("technical");
@@ -130,6 +130,8 @@ export function MediaWorkspace({
   const [reviewScore, setReviewScore] = useState("");
   const [reviewNotes, setReviewNotes] = useState("");
   const [reviewing, setReviewing] = useState(false);
+  const [clipStartSeconds, setClipStartSeconds] = useState("0");
+  const [clipEndSeconds, setClipEndSeconds] = useState("30");
 
   async function loadAssets(nextPage = page) {
     const params = new URLSearchParams({ page: String(nextPage), pageSize: String(pageSize) });
@@ -161,62 +163,77 @@ export function MediaWorkspace({
   }
 
   async function uploadSelectedFile() {
-    if (!pendingFile || uploading || !canUpload || !qiniuReady) return;
+    if (!pendingFiles.length || uploading || !canUpload || !qiniuReady) return;
     setUploading(true);
-    setUploadProgress(0);
-    try {
-      const tokenResponse = await fetch("/api/qiniu/upload-token", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name: pendingFile.name, size: pendingFile.size, mimeType: pendingFile.type }),
-      });
-      const grant = await tokenResponse.json() as UploadGrant;
-      if (!tokenResponse.ok) throw new Error(grant.error || "无法签发上传凭证");
-      const result = await new Promise<UploadResult>((resolve, reject) => {
-        qiniu.upload(pendingFile, grant.key, grant.token, { fname: pendingFile.name, mimeType: pendingFile.type }, {
-          region: REGION_BY_ID[grant.region],
-          useCdnDomain: true,
-          concurrentRequestLimit: grant.resumable.concurrentRequestLimit,
-          retryCount: grant.resumable.retryCount,
-          chunkSize: grant.resumable.chunkSizeMB,
-          checkByMD5: grant.resumable.checkByMD5,
-          forceDirect: grant.resumable.forceDirect,
-        }).subscribe({
-          next(progress: { total: { percent: number } }) {
-            setUploadProgress(Math.round(progress.total.percent));
-          },
-          error(error: unknown) {
-            reject(error instanceof Error ? error : new Error("七牛上传失败"));
-          },
-          complete(value: unknown) {
-            const uploaded = value as Partial<UploadResult>;
-            if (!uploaded.key || !uploaded.hash || typeof uploaded.fsize !== "number") {
-              reject(new Error("七牛返回的上传结果不完整"));
-              return;
-            }
-            resolve({ key: uploaded.key, hash: uploaded.hash, fsize: uploaded.fsize, mimeType: uploaded.mimeType || pendingFile.type });
-          },
+    setUploadProgress({ current: 1, total: pendingFiles.length, percent: 0 });
+    const failures: string[] = [];
+    let lastAssetId = "";
+    let deduplicated = 0;
+    for (const [index, file] of pendingFiles.entries()) {
+      setUploadProgress({ current: index + 1, total: pendingFiles.length, percent: 0 });
+      try {
+        const tokenResponse = await fetch("/api/qiniu/upload-token", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ name: file.name, size: file.size, mimeType: file.type }),
         });
-      });
-      const registration = await fetch("/api/songs", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          ...result,
-          scene,
-          ...(uploadKind === "auto" ? {} : { mediaKind: uploadKind }),
-        }),
-      });
-      const registered = await registration.json() as { assetId?: string; deduplicated?: boolean; error?: string };
-      if (!registration.ok || !registered.assetId) throw new Error(registered.error || "上传成功，但媒体登记失败");
-      toast.success(registered.deduplicated ? "已返回既有媒体资产" : "已登记媒体资产，后台将补全元数据");
-      setPendingFile(null);
-      setUploadProgress(null);
+        const grant = await tokenResponse.json() as UploadGrant;
+        if (!tokenResponse.ok) throw new Error(grant.error || "无法签发上传凭证");
+        const result = await new Promise<UploadResult>((resolve, reject) => {
+          qiniu.upload(file, grant.key, grant.token, { fname: file.name, mimeType: file.type }, {
+            region: REGION_BY_ID[grant.region],
+            useCdnDomain: true,
+            concurrentRequestLimit: grant.resumable.concurrentRequestLimit,
+            retryCount: grant.resumable.retryCount,
+            chunkSize: grant.resumable.chunkSizeMB,
+            checkByMD5: grant.resumable.checkByMD5,
+            forceDirect: grant.resumable.forceDirect,
+          }).subscribe({
+            next(progress: { total: { percent: number } }) {
+              setUploadProgress({ current: index + 1, total: pendingFiles.length, percent: Math.round(progress.total.percent) });
+            },
+            error(error: unknown) {
+              reject(error instanceof Error ? error : new Error("七牛上传失败"));
+            },
+            complete(value: unknown) {
+              const uploaded = value as Partial<UploadResult>;
+              if (!uploaded.key || !uploaded.hash || typeof uploaded.fsize !== "number") {
+                reject(new Error("七牛返回的上传结果不完整"));
+                return;
+              }
+              resolve({ key: uploaded.key, hash: uploaded.hash, fsize: uploaded.fsize, mimeType: uploaded.mimeType || file.type });
+            },
+          });
+        });
+        const registration = await fetch("/api/songs", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            ...result,
+            scene,
+            ...(uploadKind === "auto" ? {} : { mediaKind: uploadKind }),
+          }),
+        });
+        const registered = await registration.json() as { assetId?: string; deduplicated?: boolean; error?: string };
+        if (!registration.ok || !registered.assetId) throw new Error(registered.error || "上传成功，但媒体登记失败");
+        lastAssetId = registered.assetId;
+        if (registered.deduplicated) deduplicated += 1;
+      } catch (error) {
+        failures.push(`${file.name}：${error instanceof Error ? error.message : "未知错误"}`);
+      }
+    }
+    try {
+      const succeeded = pendingFiles.length - failures.length;
+      if (failures.length) {
+        toast.error(`已登记 ${succeeded} 个，${failures.length} 个失败`, failures.slice(0, 3).join("；"));
+      } else {
+        toast.success(`已推送 ${succeeded} 个媒体文件`, deduplicated ? `${deduplicated} 个命中既有资产，其余已进入后台分析。` : "已全部进入后台元数据分析。");
+      }
+      setPendingFiles([]);
       await loadAssets(1);
-      if (registered.assetId) await openDetail(registered.assetId);
-    } catch (error) {
-      toast.error("媒体上传失败", error instanceof Error ? error.message : "未知错误");
+      if (lastAssetId) await openDetail(lastAssetId);
     } finally {
+      setUploadProgress(null);
       setUploading(false);
     }
   }
@@ -273,6 +290,14 @@ export function MediaWorkspace({
     }
   }
 
+  const clipStartMs = Math.round(Number(clipStartSeconds) * 1000);
+  const clipEndMs = Math.round(Number(clipEndSeconds) * 1000);
+  const clipRangeValid = Number.isFinite(clipStartMs)
+    && Number.isFinite(clipEndMs)
+    && clipStartMs >= 0
+    && clipEndMs > clipStartMs
+    && (!detail?.durationMs || clipEndMs <= detail.durationMs);
+
   return (
     <Grid gap="base">
       {!qiniuReady && <Banner variant="alert" title="七牛尚未配置完成" description="可先创建确定性 Mock 资产；真实直传需由管理员配置七牛。" />}
@@ -280,7 +305,7 @@ export function MediaWorkspace({
 
       <ConsoleSection title="统一媒体上传" status={<Badge variant="info">qiniu-js 分片 / 断点续传</Badge>}>
         <Grid gap="sm">
-          <Text variant="secondary">文件正文始终由浏览器直传。登记会同时创建一等 media asset；相同 content hash 或七牛 hash 直接返回既有资产。</Text>
+          <Text variant="secondary">可一次选择全部录屏与视频，浏览器会逐个分片直传并登记；相同 content hash 或七牛 hash 直接返回既有资产，单个失败不会中断其余文件。</Text>
           <Grid variant="2up" gap="sm">
             <GridItem>
               <Select
@@ -305,13 +330,14 @@ export function MediaWorkspace({
             label="选择音频、视频、录屏、文档或图片"
             type="file"
             accept="audio/*,video/*,image/*,.pdf,.doc,.docx,.ppt,.pptx,.xls,.xlsx,.lrc,.txt,.md,.csv,.zip"
+            multiple
             disabled={!canUpload || uploading || !qiniuReady}
-            onChange={(event) => setPendingFile(event.target.files?.[0] ?? null)}
+            onChange={(event) => setPendingFiles(Array.from(event.target.files ?? []))}
           />
-          {pendingFile && <Text variant="secondary">{pendingFile.name} · {formatBytes(pendingFile.size)}</Text>}
-          {uploadProgress !== null && <Meter label="直传进度" value={uploadProgress} customValue={`${uploadProgress}%`} />}
+          {pendingFiles.length > 0 && <Text variant="secondary">已选择 {pendingFiles.length} 个文件 · {formatBytes(pendingFiles.reduce((total, file) => total + file.size, 0))}</Text>}
+          {uploadProgress && <Meter label={`正在推送 ${uploadProgress.current}/${uploadProgress.total}`} value={uploadProgress.percent} customValue={`${uploadProgress.percent}%`} />}
           <Grid variant="2up" gap="sm">
-            <GridItem><Button disabled={!pendingFile || uploading || !canUpload || !qiniuReady} onClick={uploadSelectedFile}>{uploading ? "处理中…" : "直传并登记"}</Button></GridItem>
+            <GridItem><Button disabled={!pendingFiles.length || uploading || !canUpload || !qiniuReady} onClick={uploadSelectedFile}>{uploading ? "批量推送中…" : `推送并登记 ${pendingFiles.length || "全部"} 个`}</Button></GridItem>
             <GridItem><Button variant="secondary" disabled={uploading || !canUpload} onClick={createMockAsset}>创建确定性 Mock 样例</Button></GridItem>
           </Grid>
         </Grid>
@@ -379,7 +405,22 @@ export function MediaWorkspace({
                   <tr><th>来源</th><td>{detail.sourceSongId ?? detail.sourceCandidateId ?? "直接媒体资产"}</td></tr>
                 </tbody>
               </Table>
-              <a href={`/api/admin/media/${detail.id}/preview`} target="_blank" rel="noreferrer">安全预览</a>
+              <Grid variant="2up" gap="sm">
+                <GridItem><a href={`/api/admin/media/${detail.id}/preview`} target="_blank" rel="noreferrer">安全预览</a></GridItem>
+                {detail.storageProvider === "qiniu" && <GridItem><a href={`/api/admin/media/${detail.id}/download`}>下载原片</a></GridItem>}
+              </Grid>
+              {detail.storageProvider === "qiniu" && (detail.mediaKind === "video" || detail.mediaKind === "screen_recording") && (
+                <Grid gap="sm">
+                  <Text bold>切片下载</Text>
+                  <Grid variant="2up" gap="sm">
+                    <GridItem><Input label="开始时间（秒）" type="number" min={0} step={0.1} value={clipStartSeconds} onValueChange={setClipStartSeconds} /></GridItem>
+                    <GridItem><Input label="结束时间（秒）" type="number" min={0.1} step={0.1} value={clipEndSeconds} onValueChange={setClipEndSeconds} /></GridItem>
+                  </Grid>
+                  {clipRangeValid
+                    ? <a href={`/api/admin/media/${detail.id}/download?startMs=${clipStartMs}&endMs=${clipEndMs}`}>下载 MP4 切片</a>
+                    : <Text variant="secondary">结束时间必须晚于开始时间，且不能超过视频时长。</Text>}
+                </Grid>
+              )}
             </ConsoleSection>
             <ConsoleSection title="确定性 Mock 转写" status={<Badge variant="neutral">{detail.transcriptModel || "未生成"}</Badge>}>
               <Text>{detail.transcript || "尚无转写"}</Text>

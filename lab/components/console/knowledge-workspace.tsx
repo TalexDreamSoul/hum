@@ -33,12 +33,39 @@ type ItemDraft = {
 type DomainDraft = { name: string; slug: string; description: string; parentId: string };
 type SourceDraft = { title: string; sourceType: string; publisher: string; versionLabel: string; license: string; excerpt: string };
 type CurriculumDraft = { code: string; name: string; ageBand: string; description: string };
+type CategoryPreset = { name: string; slug: string; description: string };
+type SubjectPreset = { name: string; accent: string; description: string; categories: CategoryPreset[] };
 
 const VIEW_ITEMS: Array<{ value: View; label: string }> = [
   { value: "items", label: "知识点" },
   { value: "domains", label: "领域" },
   { value: "sources", label: "教材" },
   { value: "curricula", label: "课程" },
+];
+
+const SUBJECT_PRESETS: SubjectPreset[] = [
+  { name: "数学启蒙", accent: "#7c5ce7", description: "数感、运算、规律和空间关系", categories: [
+    { name: "数感与计数", slug: "math-number-sense", description: "数序、数量对应、比较与估算" },
+    { name: "运算与规律", slug: "math-operations", description: "加减启蒙、分合、模式与序列" },
+    { name: "图形与空间", slug: "math-geometry", description: "平面与立体图形、方位和测量" },
+  ] },
+  { name: "英语启蒙", accent: "#18898f", description: "听说场景、主题词汇和自然拼读", categories: [
+    { name: "听力与表达", slug: "english-listening", description: "问候、指令、日常对话与情景表达" },
+    { name: "主题词汇", slug: "english-vocabulary", description: "颜色、动物、家庭、食物与动作词" },
+    { name: "自然拼读", slug: "english-phonics", description: "字母音、首音、韵脚和拼读组合" },
+  ] },
+  { name: "科学常识", accent: "#d16a22", description: "自然生命、物质现象和因果解释", categories: [
+    { name: "自然与生命", slug: "science-nature", description: "天气、动物、植物、人体与生命周期" },
+    { name: "物质与现象", slug: "science-physics", description: "光、声、力、材料与基础因果" },
+  ] },
+  { name: "生活成长", accent: "#bd4165", description: "安全规则和健康自理能力", categories: [
+    { name: "安全与规则", slug: "life-safety", description: "交通、居家、公共场所与求助规则" },
+    { name: "健康与自理", slug: "life-health", description: "清洁、饮食、作息、穿衣与整理" },
+  ] },
+  { name: "儿歌表达", accent: "#486eb6", description: "节奏韵律、情绪表达和社交练习", categories: [
+    { name: "节奏与韵律", slug: "nursery-rhythm", description: "节拍、押韵、模仿与接唱" },
+    { name: "情绪与社交", slug: "nursery-emotion", description: "情绪命名、同理、合作与礼貌表达" },
+  ] },
 ];
 
 const STATUS_ITEMS = [
@@ -400,6 +427,27 @@ export function KnowledgeWorkspace({ role }: { role: Role }) {
 
   return (
     <Grid gap="base">
+      <ConsoleSection title="知识分类总览" status={<Badge variant="info">5 个学科 · 12 个知识分类</Badge>}>
+        <Text variant="secondary">分类直接复用领域树：顶层是学科，下一层是可生产、检索和治理的知识点类别。</Text>
+        <Grid variant="2up" gap="base">
+          {SUBJECT_PRESETS.map((subject) => (
+            <GridItem key={subject.name}>
+              <div style={{ border: `1px solid ${subject.accent}55`, borderTop: `4px solid ${subject.accent}`, borderRadius: 12, padding: 16, minHeight: 190 }}>
+                <Text bold>{subject.name}</Text>
+                <Text variant="secondary">{subject.description}</Text>
+                <Grid gap="sm">
+                  {subject.categories.map((category) => (
+                    <div key={category.slug} style={{ background: `${subject.accent}12`, borderRadius: 8, padding: "8px 10px" }}>
+                      <Text bold>{category.name}</Text>
+                      <Text variant="secondary">{category.description}</Text>
+                    </div>
+                  ))}
+                </Grid>
+              </div>
+            </GridItem>
+          ))}
+        </Grid>
+      </ConsoleSection>
       <ConsoleSection title="知识工作台" status={<Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={() => refresh().catch((error) => toast.error("刷新失败", error.message))}>刷新</Button>}>
         <Grid gap="base">
           {loadError && <Banner variant="alert" title="读取知识库失败" description={loadError} />}

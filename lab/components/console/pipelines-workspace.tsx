@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Badge, Banner, Button, Grid, Input, Select, Table, Tabs, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Grid, GridItem, Input, Select, Table, Tabs, Text } from "@cloudflare/kumo";
 import { ConsoleDrawer, ConsolePagination, ConsoleSection, useConsoleToast } from "@/components/console/console-ui";
 
 const DEFAULT_STAGES = [
@@ -65,6 +65,7 @@ interface ScheduleRow {
   name: string;
   enabled: boolean;
   intervalMinutes: number;
+  batchSize: number;
   planName: string;
   nextRunAt: number;
   lastRunAt: number | null;
@@ -102,9 +103,10 @@ export function PipelinesWorkspace({ role }: { role: Role }) {
   const [revisionId, setRevisionId] = useState("");
   const [planName, setPlanName] = useState("新的知识歌曲计划");
   const [planTheme, setPlanTheme] = useState("交通安全");
-  const [scheduleName, setScheduleName] = useState("每小时知识歌曲计划");
-  const [schedulePlanName, setSchedulePlanName] = useState("定时知识歌曲计划");
-  const [intervalMinutes, setIntervalMinutes] = useState("60");
+  const [scheduleName, setScheduleName] = useState("每日 10 个音频");
+  const [schedulePlanName, setSchedulePlanName] = useState("每日自动音频");
+  const [intervalMinutes, setIntervalMinutes] = useState("1440");
+  const [batchSize, setBatchSize] = useState("10");
 
   const loadTemplates = useCallback(async (page: number, pageSize: number) => {
     const payload = await requestJson<PageResult<TemplateRow>>(`/api/admin/pipelines/templates?page=${page}&pageSize=${pageSize}`);
@@ -216,6 +218,7 @@ export function PipelinesWorkspace({ role }: { role: Role }) {
           templateRevisionId: revisionId,
           name: scheduleName,
           intervalMinutes: Number(intervalMinutes),
+          batchSize: Number(batchSize),
           planName: schedulePlanName,
           subjectType: "topic",
           input: { theme: planTheme },
@@ -319,8 +322,8 @@ export function PipelinesWorkspace({ role }: { role: Role }) {
     <Grid gap="base">
       <Banner
         variant="default"
-        title="Mock provider 已强制启用"
-        description="模型固定 music-3.0-free；provider_rate_limits 在 PostgreSQL 中全局原子限制 3 RPM。阶段报告仅预筛，不会自动批准母带或发布。"
+        title="每日自动产出已接入后台调度"
+        description="默认计划每 1440 分钟创建 10 个音频任务；服务端每分钟领取到期任务。模型仍固定 music-3.0-free，全局 3 RPM，人工复审与发布门禁不会被绕过。"
       />
       <Tabs variant="underline" value={tab} onValueChange={(value) => setTab(value as Tab)} tabs={[
         { value: "templates", label: "模板" },
@@ -397,15 +400,15 @@ export function PipelinesWorkspace({ role }: { role: Role }) {
       )}
 
       {tab === "schedules" && (
-        <ConsoleSection title="间隔计划任务" status={role === "admin" ? <Grid gap="sm"><Button size="sm" disabled={!revisions.length || Boolean(busy)} onClick={() => { setRevisionId(revisions[0]?.value ?? ""); setEditor({ kind: "schedule" }); }}>新建任务</Button><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={runDue}>运行到期任务</Button></Grid> : undefined}>
+        <ConsoleSection title="自动产出计划" status={role === "admin" ? <Grid gap="sm"><Button size="sm" disabled={!revisions.length || Boolean(busy)} onClick={() => { setRevisionId(revisions[0]?.value ?? ""); setEditor({ kind: "schedule" }); }}>新建任务</Button><Button size="sm" variant="secondary" disabled={Boolean(busy)} onClick={runDue}>运行到期任务</Button></Grid> : undefined}>
           <Table>
-            <thead><tr><th>任务</th><th>模板</th><th>间隔</th><th>下次运行</th><th>上次运行</th><th>操作</th></tr></thead>
+            <thead><tr><th>任务</th><th>模板</th><th>频率 / 数量</th><th>下次运行</th><th>上次运行</th><th>操作</th></tr></thead>
             <tbody>
               {schedules.items.map((item) => (
                 <tr key={item.id}>
                   <td><Text bold>{item.name}</Text><Text variant="secondary">创建：{item.planName}</Text></td>
                   <td>{item.templateName} · v{item.revision}</td>
-                  <td>{item.intervalMinutes} 分钟</td>
+                  <td><Text>{item.intervalMinutes === 1440 ? "每天" : `${item.intervalMinutes} 分钟`}</Text><Text variant="secondary">每次 {item.batchSize} 个音频</Text></td>
                   <td>{formatTime(item.nextRunAt)}</td>
                   <td>{formatTime(item.lastRunAt)}</td>
                   <td>{role === "admin" && <Grid gap="sm"><Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => updateSchedule(item.id, !item.enabled)}>{item.enabled ? "停用" : "启用"}</Button><Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => removeSchedule(item.id)}>删除</Button></Grid>}</td>
@@ -448,8 +451,11 @@ export function PipelinesWorkspace({ role }: { role: Role }) {
             <Input label="任务名称" value={scheduleName} onValueChange={setScheduleName} />
             <Input label="创建的计划名称" value={schedulePlanName} onValueChange={setSchedulePlanName} />
             <Input label="主题" value={planTheme} onValueChange={setPlanTheme} />
-            <Input label="间隔（分钟）" type="number" min={1} max={10080} value={intervalMinutes} onValueChange={setIntervalMinutes} />
-            <Button disabled={busy === "schedule" || !revisionId} onClick={createSchedule}>{busy === "schedule" ? "创建中…" : "创建任务"}</Button>
+            <Grid variant="2up" gap="sm">
+              <GridItem><Input label="间隔（分钟）" description="每天固定为 1440 分钟。" type="number" min={1} max={10080} value={intervalMinutes} onValueChange={setIntervalMinutes} /></GridItem>
+              <GridItem><Input label="每次音频数" type="number" min={1} max={20} value={batchSize} onValueChange={setBatchSize} /></GridItem>
+            </Grid>
+            <Button disabled={busy === "schedule" || !revisionId || Number(batchSize) < 1 || Number(batchSize) > 20} onClick={createSchedule}>{busy === "schedule" ? "创建中…" : "创建任务"}</Button>
           </>}
         </Grid>
       </ConsoleDrawer>

@@ -4,6 +4,10 @@ import { useCallback, useEffect, useState } from "react";
 import { Badge, Button, Checkbox, Grid, GridItem, Input, Select, Table, Text } from "@cloudflare/kumo";
 import { ConsoleSection, useConsoleToast } from "@/components/console/console-ui";
 
+type NotificationTemplateKey = "production_progress" | "audio_review" | "daily_summary";
+
+interface AudioAsset { id: string; originalName: string; }
+
 interface ChannelRow {
   id: string;
   name: string;
@@ -11,6 +15,7 @@ interface ChannelRow {
   target: string;
   enabled: number;
   events: string;
+  templateKey: NotificationTemplateKey;
   createdAt: number;
   updatedAt: number;
 }
@@ -20,6 +25,12 @@ const CHANNEL_ITEMS = [
   { value: "feishu_webhook", label: "飞书群机器人 Webhook" },
 ] as const;
 
+const TEMPLATE_ITEMS = [
+  { value: "production_progress", label: "生产进度卡片" },
+  { value: "audio_review", label: "音频试听与质检" },
+  { value: "daily_summary", label: "每日产出汇总" },
+] as const;
+
 const EVENT_LABEL: Record<string, string> = {
   "job.waiting": "待人工确认",
   "job.failed": "任务失败",
@@ -27,6 +38,7 @@ const EVENT_LABEL: Record<string, string> = {
   "report.high_score": "高分报告",
   "report.failed": "不合格报告",
   "report.completed": "普通报告完成",
+  "audio.test": "测试音频",
 };
 
 async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
@@ -45,13 +57,21 @@ export function NotificationsWorkspace() {
   const [chatId, setChatId] = useState("");
   const [webhookUrl, setWebhookUrl] = useState("");
   const [signingSecret, setSigningSecret] = useState("");
-  const [selectedEvents, setSelectedEvents] = useState<string[]>(["job.waiting", "job.failed", "job.completed", "report.high_score", "report.failed"]);
+  const [templateKey, setTemplateKey] = useState<NotificationTemplateKey>("audio_review");
+  const [audioAssets, setAudioAssets] = useState<AudioAsset[]>([]);
+  const [audioAssetId, setAudioAssetId] = useState("");
+  const [selectedEvents, setSelectedEvents] = useState<string[]>(["audio.test", "job.waiting", "job.failed", "job.completed", "report.high_score", "report.failed"]);
   const [busy, setBusy] = useState("");
 
   const load = useCallback(async () => {
-    const payload = await requestJson<{ channels: ChannelRow[]; events: string[] }>("/api/admin/notifications");
+    const [payload, media] = await Promise.all([
+      requestJson<{ channels: ChannelRow[]; events: string[] }>("/api/admin/notifications"),
+      requestJson<{ items: AudioAsset[] }>("/api/admin/media?mediaKind=audio&page=1&pageSize=100"),
+    ]);
     setChannels(payload.channels);
     setEvents(payload.events);
+    setAudioAssets(media.items);
+    setAudioAssetId((current) => current || media.items[0]?.id || "");
   }, []);
 
   useEffect(() => { load().catch((error) => toast.error("读取通知配置失败", error.message)); }, [load]);
@@ -62,7 +82,7 @@ export function NotificationsWorkspace() {
       await requestJson("/api/admin/notifications", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, channelType, chatId, webhookUrl, signingSecret, events: selectedEvents }),
+        body: JSON.stringify({ name, channelType, chatId, webhookUrl, signingSecret, templateKey, events: selectedEvents }),
       });
       setWebhookUrl("");
       setSigningSecret("");
@@ -106,8 +126,12 @@ export function NotificationsWorkspace() {
   async function test(id: string) {
     setBusy(id);
     try {
-      await requestJson(`/api/admin/notifications/${id}/test`, { method: "POST" });
-      toast.success("测试消息已发送");
+      await requestJson(`/api/admin/notifications/${id}/test`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(audioAssetId ? { audioAssetId } : {}),
+      });
+      toast.success(audioAssetId ? "测试音频已推送到飞书群" : "测试消息已发送");
     } catch (error) {
       toast.error("测试消息发送失败", error instanceof Error ? error.message : undefined);
     } finally {
@@ -122,6 +146,8 @@ export function NotificationsWorkspace() {
           <Grid variant="2up" gap="sm">
             <GridItem><Input label="渠道名称" value={name} onValueChange={setName} /></GridItem>
             <GridItem><Select label="发送方式" value={channelType} items={[...CHANNEL_ITEMS]} onValueChange={(value) => value && setChannelType(value)} /></GridItem>
+            <GridItem><Select label="卡片模板" value={templateKey} items={[...TEMPLATE_ITEMS]} onValueChange={(value) => value && setTemplateKey(value)} /></GridItem>
+            <GridItem><Text variant="secondary">渠道级模板统一控制标题、按钮和状态色；音频质检模板会优先显示试听入口。</Text></GridItem>
           </Grid>
           {channelType === "feishu_app" ? (
             <Input label="群 chat_id" description="应用机器人必须已加入该群，并在飞书开放平台开通消息权限。" value={chatId} onValueChange={setChatId} />
@@ -150,20 +176,30 @@ export function NotificationsWorkspace() {
         </Grid>
       </ConsoleSection>
 
+      <ConsoleSection title="测试音频推送" status={<Badge variant={audioAssets.length ? "success" : "neutral"}>{audioAssets.length} 个音频</Badge>}>
+        <Select
+          label="本次测试音频"
+          description="点击渠道的“推送测试音频”，所选资产会以可试听飞书卡片发送。"
+          value={audioAssetId}
+          items={audioAssets.map((asset) => ({ value: asset.id, label: asset.originalName }))}
+          onValueChange={(value) => setAudioAssetId(value ?? "")}
+        />
+      </ConsoleSection>
+
       <ConsoleSection title="通知渠道" status={<Badge variant="neutral">{channels.length} 个</Badge>}>
         <Table>
-          <thead><tr><th>渠道</th><th>类型</th><th>目标</th><th>事件</th><th>状态</th><th>操作</th></tr></thead>
+          <thead><tr><th>渠道</th><th>类型 / 模板</th><th>目标</th><th>事件</th><th>状态</th><th>操作</th></tr></thead>
           <tbody>
             {channels.map((channel) => (
               <tr key={channel.id}>
                 <td><Text bold>{channel.name}</Text><Text variant="mono-secondary">{channel.id.slice(0, 8)}</Text></td>
-                <td>{CHANNEL_ITEMS.find((item) => item.value === channel.channelType)?.label ?? channel.channelType}</td>
+                <td><Text>{CHANNEL_ITEMS.find((item) => item.value === channel.channelType)?.label ?? channel.channelType}</Text><Text variant="secondary">{TEMPLATE_ITEMS.find((item) => item.value === channel.templateKey)?.label ?? channel.templateKey}</Text></td>
                 <td>{channel.target}</td>
                 <td>{channel.events.split(",").filter(Boolean).map((event) => EVENT_LABEL[event] ?? event).join("、") || "—"}</td>
                 <td><Badge variant={channel.enabled ? "success" : "neutral"}>{channel.enabled ? "启用" : "停用"}</Badge></td>
                 <td>
                   <Grid gap="sm">
-                    <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => test(channel.id)}>测试</Button>
+                    <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => test(channel.id)}>{audioAssetId ? "推送测试音频" : "测试渠道"}</Button>
                     <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => patch(channel.id, !channel.enabled)}>{channel.enabled ? "停用" : "启用"}</Button>
                     <Button size="sm" variant="ghost" disabled={Boolean(busy)} onClick={() => remove(channel.id)}>删除</Button>
                   </Grid>

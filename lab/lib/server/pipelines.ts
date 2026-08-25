@@ -112,6 +112,7 @@ export const pipelineScheduleCreateSchema = z.object({
   name: z.string().trim().min(1).max(160),
   intervalMinutes: z.number().int().min(1).max(10_080),
   planName: z.string().trim().min(1).max(160),
+  batchSize: z.number().int().min(1).max(20).default(1),
   subjectType: z.string().trim().min(1).max(80).default("topic"),
   subjectId: idSchema.nullable().optional(),
   input: jsonRecordSchema.default({}),
@@ -123,6 +124,7 @@ export const pipelineScheduleUpdateSchema = z.object({
   enabled: z.boolean().optional(),
   intervalMinutes: z.number().int().min(1).max(10_080).optional(),
   planName: z.string().trim().min(1).max(160).optional(),
+  batchSize: z.number().int().min(1).max(20).optional(),
   subjectType: z.string().trim().min(1).max(80).optional(),
   subjectId: idSchema.nullable().optional(),
   input: jsonRecordSchema.optional(),
@@ -216,6 +218,7 @@ interface ScheduleRow {
 
 interface SchedulePayload {
   planName: string;
+  batchSize: number;
   subjectType: string;
   subjectId: string | null;
   input: Record<string, unknown>;
@@ -301,6 +304,7 @@ function stageRunView(row: StageRunRow) {
 function schedulePayload(value: string): SchedulePayload {
   const parsed = z.object({
     planName: z.string().trim().min(1).max(160),
+    batchSize: z.number().int().min(1).max(20).default(1),
     subjectType: z.string().trim().min(1).max(80),
     subjectId: idSchema.nullable(),
     input: jsonRecordSchema,
@@ -321,6 +325,7 @@ function scheduleView(row: ScheduleRow) {
     enabled: row.enabled === 1,
     intervalMinutes: row.interval_minutes,
     planName: payload.planName,
+    batchSize: payload.batchSize,
     subjectType: payload.subjectType,
     subjectId: payload.subjectId,
     input: payload.input,
@@ -799,12 +804,14 @@ async function validateScheduleRevision(database: HumDatabase, revisionId: strin
 
 function schedulePayloadFromInput(input: {
   planName: string;
+  batchSize: number;
   subjectType: string;
   subjectId?: string | null;
   input: Record<string, unknown>;
 }): SchedulePayload {
   return {
     planName: input.planName,
+    batchSize: input.batchSize,
     subjectType: input.subjectType,
     subjectId: input.subjectId ?? null,
     input: input.input,
@@ -852,6 +859,7 @@ export async function updatePipelineSchedule(scheduleId: string, input: unknown,
     const payload = schedulePayload(current.input_json);
     const nextPayload: SchedulePayload = {
       planName: parsed.planName ?? payload.planName,
+      batchSize: parsed.batchSize ?? payload.batchSize,
       subjectType: parsed.subjectType ?? payload.subjectType,
       subjectId: parsed.subjectId === undefined ? payload.subjectId : parsed.subjectId,
       input: parsed.input ?? payload.input,
@@ -888,7 +896,7 @@ export async function deletePipelineSchedule(scheduleId: string, userId: string)
   })();
 }
 
-export async function runDuePipelineSchedules(userId: string, limit = 20) {
+export async function runDuePipelineSchedules(userId: string | null, limit = 20) {
   const now = Date.now();
   const planIds = await getDb().transaction(async (database) => {
     const dueSchedules = await database.prepare(`
@@ -900,7 +908,7 @@ export async function runDuePipelineSchedules(userId: string, limit = 20) {
         LIMIT ?
       )
       UPDATE pipeline_schedules AS s
-      SET last_run_at = ?, next_run_at = ? + s.interval_minutes * 60000, updated_at = ?
+      SET last_run_at = ?, next_run_at = CAST(? AS BIGINT) + s.interval_minutes * 60000, updated_at = ?
       FROM due
       WHERE s.id = due.id
       RETURNING s.*
@@ -909,21 +917,32 @@ export async function runDuePipelineSchedules(userId: string, limit = 20) {
     for (const schedule of dueSchedules) {
       const revision = await readRevision(database, schedule.template_revision_id, true);
       const payload = schedulePayload(schedule.input_json);
-      const planId = await insertPlan(database, {
-        revision,
-        name: payload.planName,
-        subjectType: payload.subjectType,
-        subjectId: payload.subjectId,
-        payload: payload.input,
-        createdBy: userId,
-        status: "queued",
-        scheduledAt: null,
-        attempt: 1,
-        parentPlanId: null,
-        scheduleId: schedule.id,
-      });
-      await recordAudit(userId, "pipeline_schedule.run_due", "pipeline_plan", planId, { ...mockMarker() }, database);
-      created.push(planId);
+      const actorId = userId ?? schedule.created_by;
+      if (!actorId) throw new ApiError(409, "计划任务缺少可用的执行身份");
+      for (let index = 0; index < payload.batchSize; index += 1) {
+        const planId = await insertPlan(database, {
+          revision,
+          name: payload.batchSize === 1 ? payload.planName : `${payload.planName} · ${index + 1}/${payload.batchSize}`,
+          subjectType: payload.subjectType,
+          subjectId: payload.subjectId,
+          payload: {
+            ...payload.input,
+            scheduleBatch: { index: index + 1, total: payload.batchSize },
+          },
+          createdBy: actorId,
+          status: "queued",
+          scheduledAt: null,
+          attempt: 1,
+          parentPlanId: null,
+          scheduleId: schedule.id,
+        });
+        await recordAudit(actorId, "pipeline_schedule.run_due", "pipeline_plan", planId, {
+          batchIndex: index + 1,
+          batchSize: payload.batchSize,
+          ...mockMarker(),
+        }, database);
+        created.push(planId);
+      }
     }
     return created;
   })();
