@@ -20,14 +20,14 @@ import { AppShell, type NavGroup } from "@/components/app-shell";
 import { LogoutButton } from "@/components/console/logout-button";
 
 const ROLE_LABEL: Record<string, string> = {
-  admin: "管理员",
-  approver: "审批",
-  uploader: "上传",
+  admin: "A 级管理员",
+  approver: "B 级复审员",
+  uploader: "C 级创作者",
 };
 
 function consoleGroups(role: string): NavGroup[] {
   const workspace = [
-    { href: "/console", label: "概览", icon: HouseIcon },
+    { href: "/console", label: "概览", icon: HouseIcon, exact: true },
     { href: "/console/songs", label: "歌曲入库", icon: MusicNotesSimpleIcon },
     { href: "/console/reports", label: "评分报告", icon: ChartBarIcon },
   ];
@@ -38,7 +38,18 @@ function consoleGroups(role: string): NavGroup[] {
     );
   }
 
-  const groups: NavGroup[] = [{ label: "工作台", items: workspace }];
+  const governance = [
+    { href: "/console/knowledge", label: "知识库", icon: BookOpenTextIcon },
+    { href: "/console/catalog", label: "出版目录", icon: MusicNotesSimpleIcon },
+    { href: "/console/media", label: "媒体资产", icon: ListChecksIcon },
+    { href: "/console/pipelines", label: "生产管线", icon: FlaskIcon },
+    { href: "/console/governance", label: "内容治理", icon: ChartBarIcon },
+  ];
+
+  const groups: NavGroup[] = [
+    { label: "工作台", items: workspace },
+    { label: "内容与治理", items: governance },
+  ];
   if (role === "admin") {
     groups.push({
       label: "管理",
@@ -55,7 +66,6 @@ function consoleGroups(role: string): NavGroup[] {
     label: "账户",
     items: [{ href: "/console/profile", label: "个人资料", icon: UserCircleIcon }],
   });
-  // 后台和公共页是同一个产品，导航里保留回试听页的入口。
   groups.push({
     label: "公共页",
     items: [{ href: "/", label: "试听与调研", icon: SpeakerHighIcon }],

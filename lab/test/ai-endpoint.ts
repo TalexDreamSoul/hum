@@ -49,9 +49,9 @@ check(
 
 // ── 端点解析 ──
 const bases = [
-  ["https://api.example.com/v1/", "https://api.example.com/v1"],
-  ["https://api.example.com/v1/chat/completions", "https://api.example.com/v1"],
-  ["https://api.example.com/v1/responses", "https://api.example.com/v1"],
+  ["https://relay.example.com/v1/", "https://relay.example.com/v1"],
+  ["https://relay.example.com/v1/chat/completions", "https://relay.example.com/v1"],
+  ["https://relay.example.com/v1/responses", "https://relay.example.com/v1"],
 ];
 for (const [input, expected] of bases) {
   const got = normalizeAiBaseUrl(input);

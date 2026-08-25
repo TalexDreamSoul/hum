@@ -18,22 +18,23 @@ export default function Methodology() {
 
       <h2>总公式</h2>
       <p>
-        8 个维度各得 0–100 分，按权重加权平均（权重合计 100）。
+        9 个维度各得 0–100 分，按权重加权平均（权重合计 100）。
         检不出人声的音频（纯伴奏 / 接唱版）会剔除音域、清晰度、留白三个维度，剩余权重重新归一。
-        时长超出场景上限不占权重，只轻扣总分（超 1 倍扣 4 分，超 1.5 倍扣 8 分）。
+        时长适配占 8 分：生产候选对比不可变 SongSpec 目标，其他音频使用场景目标；它衡量结构适配，不冒充儿童普适注意力结论。
         等级：A ≥ 85，B ≥ 70，C ≥ 55，其余 D。
       </p>
       <table>
         <thead><tr className="text-kumo-subtle"><th style={th}>维度</th><th style={th}>权重</th><th style={th}>核心问题</th></tr></thead>
         <tbody>
-          <tr><td style={td}>响度与安全</td><td style={td}>15</td><td style={td}>家长设一次音量能不能一直用；有没有削波</td></tr>
-          <tr><td style={td}>动态起伏</td><td style={td}>8</td><td style={td}>会不会一堵墙，或安静段在车里消失</td></tr>
-          <tr><td style={td}>节奏适配</td><td style={td}>14</td><td style={td}>孩子跟不跟得上拍；契不契合场景</td></tr>
-          <tr><td style={td}>适唱音域</td><td style={td}>15</td><td style={td}>孩子的嗓子够不够得着这条旋律</td></tr>
-          <tr><td style={td}>人声清晰度</td><td style={td}>14</td><td style={td}>词能不能被听清（辅音带有没有被伴奏盖住）</td></tr>
-          <tr><td style={td}>重复与结构</td><td style={td}>14</td><td style={td}>有没有能"洗脑"的钩子，又不至于单调</td></tr>
-          <tr><td style={td}>留白接唱</td><td style={td}>12</td><td style={td}>有没有孩子能接的空位</td></tr>
-          <tr><td style={td}>频谱舒适度</td><td style={td}>8</td><td style={td}>高频毛刺与低频轰隆</td></tr>
+          <tr><td style={td}>响度与安全</td><td style={td}>14</td><td style={td}>家长设一次音量能不能一直用；有没有削波</td></tr>
+          <tr><td style={td}>动态起伏</td><td style={td}>7</td><td style={td}>会不会一堵墙，或安静段在车里消失</td></tr>
+          <tr><td style={td}>节奏适配</td><td style={td}>13</td><td style={td}>孩子跟不跟得上拍；契不契合场景</td></tr>
+          <tr><td style={td}>适唱音域</td><td style={td}>14</td><td style={td}>孩子的嗓子够不够得着这条旋律</td></tr>
+          <tr><td style={td}>人声清晰度</td><td style={td}>13</td><td style={td}>词能不能被听清（辅音带有没有被伴奏盖住）</td></tr>
+          <tr><td style={td}>重复与结构</td><td style={td}>13</td><td style={td}>有没有能"洗脑"的钩子，又不至于单调</td></tr>
+          <tr><td style={td}>留白接唱</td><td style={td}>11</td><td style={td}>有没有孩子能接的空位</td></tr>
+          <tr><td style={td}>频谱舒适度</td><td style={td}>7</td><td style={td}>高频毛刺与低频轰隆</td></tr>
+          <tr><td style={td}>时长适配</td><td style={td}>8</td><td style={td}>实际长度是否匹配年龄规格或使用场景</td></tr>
         </tbody>
       </table>
 
@@ -44,7 +45,7 @@ export default function Methodology() {
         （见各节"局限"），这是有意的取舍——这个工具回答"值不值得进一步用"，不出具审计级数据。
       </p>
 
-      <h2>1 · 响度与安全（15 分）</h2>
+      <h2>1 · 响度与安全（14 分）</h2>
       <h3>测什么</h3>
       <p>整体响度（LUFS）、响度范围（LRA）、真峰值（dBTP）。</p>
       <h3>怎么算</h3>
@@ -64,14 +65,14 @@ export default function Methodology() {
       <h3>局限</h3>
       <p>LUFS 是信号侧指标，实际暴露还取决于播放设备与音量设置；真峰值为近似值。</p>
 
-      <h2>2 · 动态起伏（8 分）</h2>
+      <h2>2 · 动态起伏（7 分）</h2>
       <p>
         LRA 按 EBU Tech 3342（短期响度分布的 P95−P10，双门限）。目标带默认 3–9 LU：
         低于 3 是"从头到尾一堵墙"，高密度压缩听感疲劳；高于 9 的安静段在
         约 65–70 dB 的车内噪声里直接消失——而通勤正是 hum 的主场景。睡前带整体下移（2–7）。
       </p>
 
-      <h2>3 · 节奏适配（14 分）</h2>
+      <h2>3 · 节奏适配（13 分）</h2>
       <h3>怎么算</h3>
       <p>
         谱通量起始包络 → 自相关（50–200 BPM），对数正态轻先验消除倍频歧义，抛物线插值细化；
@@ -85,7 +86,7 @@ export default function Methodology() {
         睡前放 150 BPM 是灾难。所以评分基准不是单一最优值，而是 hum 的场景锚点：
       </p>
       <table>
-        <thead><tr className="text-kumo-subtle"><th style={th}>场景</th><th style={th}>锚点 BPM</th><th style={th}>软带</th><th style={th}>响度目标</th><th style={th}>时长上限</th></tr></thead>
+        <thead><tr className="text-kumo-subtle"><th style={th}>场景</th><th style={th}>锚点 BPM</th><th style={th}>软带</th><th style={th}>响度目标</th><th style={th}>目标 / 硬上限</th></tr></thead>
         <tbody>
           {(Object.keys(SCENES) as (keyof typeof SCENES)[]).map((k) => {
             const s = SCENES[k];
@@ -95,14 +96,14 @@ export default function Methodology() {
                 <td style={td}>{s.bpmAnchor ?? "—"}</td>
                 <td style={td}>{s.bpmBand[1]}–{s.bpmBand[2]}</td>
                 <td style={td}>{s.lufsTarget} LUFS</td>
-                <td style={td}>{s.durMaxSec}s</td>
+                <td style={td}>{s.durTargetSec}s / {s.durMaxSec}s</td>
               </tr>
             );
           })}
         </tbody>
       </table>
 
-      <h2>4 · 适唱音域（15 分）</h2>
+      <h2>4 · 适唱音域（14 分）</h2>
       <h3>怎么算</h3>
       <p>
         对 mid 声道做 180–700 Hz 带通后逐帧归一化自相关提取 F0（清晰度门限 0.62），
@@ -122,7 +123,7 @@ export default function Methodology() {
         文献中的舒适区随年龄移动，这里用的是 3–6 岁的保守带。检不出人声时本维度不计分。
       </p>
 
-      <h2>5 · 人声清晰度（14 分，代理指标）</h2>
+      <h2>5 · 人声清晰度（13 分，代理指标）</h2>
       <h3>怎么算</h3>
       <p>三个子项加权：
         1–4 kHz 能量占比（0.4）；人声活跃帧内 1–4 kHz 的 mid/side 能量比（0.3，≥8 dB 满分）；
@@ -141,7 +142,7 @@ export default function Methodology() {
         单声道文件测不了 mid/side，该子项按中性 85 分计。
       </p>
 
-      <h2>6 · 重复与结构（14 分）</h2>
+      <h2>6 · 重复与结构（13 分）</h2>
       <h3>怎么算</h3>
       <p>
         0.5 s 帧级 chroma（12 音级）自相似：每帧找距它 ≥4 s 的最相似帧，
@@ -157,7 +158,7 @@ export default function Methodology() {
       <h3>局限</h3>
       <p>chroma 对移调重复、大幅变奏不敏感，测到的是保守下界。</p>
 
-      <h2>7 · 留白接唱（12 分）</h2>
+      <h2>7 · 留白接唱（11 分）</h2>
       <h3>怎么算</h3>
       <p>
         mid 声道 300–4000 Hz 带通包络低于其活跃中位数 −9 dB、同时全带包络仍在
@@ -174,10 +175,22 @@ export default function Methodology() {
       <h3>局限</h3>
       <p>没有做人声分离，乐器独奏段会被计入留白；结果应读作"可挖空窗口的上界"。</p>
 
-      <h2>8 · 频谱舒适度（8 分）</h2>
+      <h2>8 · 频谱舒适度（7 分）</h2>
       <p>
         &gt;8 kHz 能量占比 ≤7% 为满分带（超过意味着齿音、毛刺偏多——儿童对高频更敏感，久听易疲劳）；
         &lt;60 Hz 占比 ≤12%（小音箱放不出超低频，还挤占动态余量与车载功放的 headroom）。
+      </p>
+
+      <h2>9 · 时长适配（8 分）</h2>
+      <p>
+        生产候选以不可变 SongSpec 的年龄目标为中心：3–4 岁 45 秒、5–6 岁 60 秒、7–8 岁 75 秒、9–12 岁 90 秒；
+        其他上传音频使用场景目标。目标的 80%–120% 为满分带，50% 以下或约 160% 以上降到 0，并受场景硬上限约束。
+      </p>
+      <p>
+        这不是“儿童普遍只能听这么久”的学术结论，而是 hum 当前用于控制单知识点密度、复听成本和接唱轮次的生产假设。
+        真正的偏好必须用完播率、主动重播、厌烦度和 24 小时记忆结果校准。当前 MiniMax 云端 <code>/v1/music_generation</code>
+        没有 <code>duration</code> 参数，官方也未公布输出硬上限；系统只能通过歌词长度、曲式和提示词间接控制，生成后再按真实时长评分。
+        开源 Music 3 的 <code>max_duration</code> 支持约 300 秒，但它不是当前云端 API 的同一控制面。
       </p>
 
       <h2>总体边界</h2>
@@ -199,7 +212,7 @@ export default function Methodology() {
         <li>Speech Intelligibility Index（SII / ANSI S3.5）—— 1–4 kHz 辅音带权重</li>
         <li>Margulis《On Repeat》(2013)；INMI/耳虫研究 —— 重复与音乐记忆</li>
         <li>Retrieval practice 文献（如 Frontiers in Education 2018 儿童音乐助记 RCT）—— 留白接唱维度的依据</li>
-        <li>场景锚点（BPM/时长/响度目标）—— 本项目的场景设计</li>
+        <li>场景锚点（BPM/时长/响度目标）—— hum 项目自身的场景设计（以当前部署为准）</li>
       </ul>
     </main>
   );

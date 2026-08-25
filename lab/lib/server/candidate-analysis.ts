@@ -6,7 +6,7 @@ import { buildLyricsTimeline, type LyricLineTiming } from "../analysis/lyrics-ti
 import type { SceneKey } from "../analysis/score";
 import type { CandidateAudioProbe } from "./candidates";
 
-const ANALYZER_VERSION = "hum-dsp-1";
+const ANALYZER_VERSION = "hum-dsp-2";
 const ANALYSIS_SAMPLE_RATE = 16_000;
 const MAX_PCM_BYTES = ANALYSIS_SAMPLE_RATE * 600 * Float32Array.BYTES_PER_ELEMENT;
 const MIN_PASS_SCORE = 70;
@@ -87,6 +87,7 @@ export async function assessCandidateAudio(
   probe: CandidateAudioProbe,
   signal: AbortSignal,
   lyrics = "",
+  targetDurationSec?: number,
 ): Promise<CandidateAutoAssessment> {
   if (!probe.passed) {
     return {
@@ -107,7 +108,7 @@ export async function assessCandidateAudio(
   }
 
   const samples = await decodeMonoPcm(file, signal);
-  const report = await analyze(file, [samples], ANALYSIS_SAMPLE_RATE, scene);
+  const report = await analyze(file, [samples], ANALYSIS_SAMPLE_RATE, scene, undefined, targetDurationSec);
   const passed = report.score.total >= MIN_PASS_SCORE;
   const relevantFindings = report.score.findings.filter((finding) => finding.tone === "bad" || finding.tone === "warn");
   return {

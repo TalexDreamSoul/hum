@@ -102,7 +102,7 @@ export async function createSongSpec(input: unknown, userId: string) {
     const latest = await transaction.prepare(`
       SELECT id, revision FROM song_specs WHERE spec_key = ? ORDER BY revision DESC LIMIT 1
     `).get(parsed.specKey) as { id: string; revision: number } | undefined;
-  
+
     let revision = 1;
     if (parsed.parentId) {
       const parent = await transaction.prepare("SELECT id, spec_key, revision FROM song_specs WHERE id = ?").get(parsed.parentId) as
@@ -115,7 +115,7 @@ export async function createSongSpec(input: unknown, userId: string) {
     } else if (latest) {
       throw new ApiError(409, "该 specKey 已存在；新版本必须提供 parentId");
     }
-  
+
     const sourceJson = stableJson(parsed.content.source);
     const existingSource = await transaction.prepare("SELECT id, content_json FROM source_materials WHERE source_hash = ?").get(sourceHash) as
       | { id: string; content_json: string }
@@ -139,7 +139,7 @@ export async function createSongSpec(input: unknown, userId: string) {
       userId,
       now,);
     }
-  
+
     await transaction.prepare(`
       INSERT INTO song_specs (
         id, spec_key, revision, parent_id, source_material_id, status,

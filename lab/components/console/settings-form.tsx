@@ -1,20 +1,15 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Badge, Button, Checkbox, Grid, GridItem, Input, Select, Tabs, Text } from "@cloudflare/kumo";
+import { Badge, Banner, Button, Checkbox, Grid, GridItem, Input, Select, Tabs, Text } from "@cloudflare/kumo";
 import { ConsoleSection, useConsoleToast } from "@/components/console/console-ui";
 import { AI_PROTOCOL_ITEMS, AI_PROTOCOL_LABELS, type AiProtocol } from "@/lib/ai-endpoint";
-import {
-  MINIMAX_BATCH_MODELS,
-  MINIMAX_CURRENT_MUSIC_MODELS,
-  MINIMAX_MUSIC_MODEL_LABELS,
-  type MiniMaxBatchModel,
-  type MiniMaxCurrentMusicModel,
-} from "@/lib/minimax";
 
 type Region = "z0" | "z1" | "z2" | "na0" | "as0";
 
 interface SettingsPayload {
+  mockEnabled: true;
+  provider: "mock";
   publicUrl: string;
   feishuCallbackUrl: string;
   qiniu: {
@@ -22,8 +17,8 @@ interface SettingsPayload {
     domain: string; privateBucket: boolean; prefix: string; ready: boolean;
   };
   feishu: { enabled: boolean; appId: string; appSecretSet: boolean; ready: boolean };
-  ai: { baseUrl: string; apiKeySet: boolean; model: string; protocol: AiProtocol; ready: boolean };
-  minimax: { baseUrl: string; apiKeySet: boolean; defaultModel: MiniMaxCurrentMusicModel; batchModel: MiniMaxBatchModel; requestsPerMinute: number; ready: boolean };
+  ai: { baseUrl: string; apiKeySet: boolean; model: string; protocol: AiProtocol; ready: boolean; mock: true; provider: "mock" };
+  minimax: { defaultModel: "music-3.0-free"; enabledModels: ["music-3.0-free"]; requestsPerMinute: 3; ready: boolean; mock: true; provider: "mock" };
 }
 
 interface Draft {
@@ -31,7 +26,6 @@ interface Draft {
   qiniu: { enabled: boolean; accessKey: string; secretKey: string; clearAccessKey: boolean; clearSecretKey: boolean; bucket: string; region: Region; domain: string; privateBucket: boolean; prefix: string };
   feishu: { enabled: boolean; appId: string; appSecret: string; clearAppSecret: boolean };
   ai: { baseUrl: string; apiKey: string; clearApiKey: boolean; model: string; protocol: AiProtocol };
-  minimax: { baseUrl: string; apiKey: string; clearApiKey: boolean; defaultModel: MiniMaxCurrentMusicModel; batchModel: MiniMaxBatchModel; requestsPerMinute: number };
 }
 
 const REGION_ITEMS = [
@@ -52,15 +46,6 @@ const TAB_ITEMS = [
   { value: "ai", label: "AI" },
 ] as const;
 
-const MINIMAX_MODEL_ITEMS = MINIMAX_CURRENT_MUSIC_MODELS.map((value) => ({
-  value,
-  label: MINIMAX_MUSIC_MODEL_LABELS[value],
-}));
-const MINIMAX_BATCH_MODEL_ITEMS = MINIMAX_BATCH_MODELS.map((value) => ({
-  value,
-  label: MINIMAX_MUSIC_MODEL_LABELS[value],
-}));
-
 function toDraft(payload: SettingsPayload): Draft {
   return {
     publicUrl: payload.publicUrl,
@@ -71,14 +56,6 @@ function toDraft(payload: SettingsPayload): Draft {
     },
     feishu: { enabled: payload.feishu.enabled, appId: payload.feishu.appId, appSecret: "", clearAppSecret: false },
     ai: { baseUrl: payload.ai.baseUrl, apiKey: "", clearApiKey: false, model: payload.ai.model, protocol: payload.ai.protocol },
-    minimax: {
-      baseUrl: payload.minimax.baseUrl,
-      apiKey: "",
-      clearApiKey: false,
-      defaultModel: payload.minimax.defaultModel,
-      batchModel: payload.minimax.batchModel,
-      requestsPerMinute: payload.minimax.requestsPerMinute,
-    },
   };
 }
 
@@ -230,28 +207,16 @@ export function SettingsForm() {
 
         {tab === "minimax" && (
         <ConsoleSection
-          title="MiniMax 音乐"
-          status={<><Badge variant={saved.minimax.ready ? "success" : "warning"}>{saved.minimax.ready ? "已就绪" : "待配置"}</Badge>{testButton("minimax")}</>}
+          title="Mock 音乐 Provider"
+          status={<><Badge variant="success">已强制启用</Badge>{testButton("minimax")}</>}
         >
           <Grid gap="sm">
-            <Text variant="secondary">API Key 加密落库，不发送到浏览器。生产实验使用后台指定的免费模型和 RPM，当前单次成本为 0。</Text>
-            <Grid variant="2up" gap="sm">
-              <GridItem><Input label="接口域名" description="不同账号所在的云不同：api.minimaxi.com / api.minimax.chat / api.minimax.io。填错会报 2049 invalid api key。" value={draft.minimax.baseUrl}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, minimax: { ...draft.minimax, baseUrl: event.target.value } })} /></GridItem>
-              <GridItem><Input label={`MiniMax API Key${saved.minimax.apiKeySet ? "（已保存）" : ""}`} type="password" placeholder="留空保持不变" value={draft.minimax.apiKey}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, minimax: { ...draft.minimax, apiKey: event.target.value } })} /></GridItem>
-              <GridItem><Select label="模型实验室默认模型" value={draft.minimax.defaultModel} items={MINIMAX_MODEL_ITEMS}
-                onValueChange={(value: MiniMaxCurrentMusicModel | null) => value && setDraft({ ...draft, minimax: { ...draft.minimax, defaultModel: value } })}
-                renderValue={(value: MiniMaxCurrentMusicModel) => MINIMAX_MUSIC_MODEL_LABELS[value]} /></GridItem>
-              <GridItem><Select label="生产实验批次模型" value={draft.minimax.batchModel} items={MINIMAX_BATCH_MODEL_ITEMS}
-                onValueChange={(value: MiniMaxBatchModel | null) => value && setDraft({ ...draft, minimax: { ...draft.minimax, batchModel: value } })}
-                renderValue={(value: MiniMaxBatchModel) => MINIMAX_MUSIC_MODEL_LABELS[value]} /></GridItem>
-              <GridItem><Input label="生产实验 RPM" type="number" min={1} max={60} value={String(draft.minimax.requestsPerMinute)}
-                onChange={(event: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, minimax: { ...draft.minimax, requestsPerMinute: Number(event.target.value) } })} /></GridItem>
-            </Grid>
-            <Text variant="secondary">当前策略：{MINIMAX_MUSIC_MODEL_LABELS[draft.minimax.batchModel]} · RPM {draft.minimax.requestsPerMinute} · 单次成本 0.0</Text>
-            {saved.minimax.apiKeySet && <Checkbox label="清除 MiniMax API Key" checked={draft.minimax.clearApiKey}
-              onCheckedChange={(checked) => setDraft({ ...draft, minimax: { ...draft.minimax, clearApiKey: checked } })} />}
+            <Banner
+              variant="default"
+              title="Mock provider · music-3.0-free · 全局 3 RPM"
+              description="当前环境不会请求 MiniMax；不需要 API Key。服务端固定生成可追溯 WAV Mock 产物，模型和速率不能由浏览器或设置覆盖。"
+            />
+            <Text variant="secondary">所有返回都会标记 mock=true、provider=mock。自动评分仅作预筛，仍须人工评审，不能自动批准母带或发布。</Text>
           </Grid>
         </ConsoleSection>
         )}
@@ -262,7 +227,7 @@ export function SettingsForm() {
           status={<><Badge variant={saved.ai.ready ? "success" : "warning"}>{saved.ai.ready ? "已就绪" : "待配置"}</Badge>{testButton("ai")}</>}
         >
           <Grid gap="sm">
-            <Text variant="secondary">供服务端内容分析与模型测试复用；与七牛、飞书一样不依赖环境变量。</Text>
+            <Text variant="secondary">当前环境强制使用 Mock provider；这些字段不会触发外部 AI 请求，所有短路结果明确标记 mock=true、provider=mock。</Text>
             <Grid variant="2up" gap="sm">
               <GridItem><Input label="Base URL" description="填到 /v1 即可，接口路径由协议决定。" value={draft.ai.baseUrl}
                 onChange={(event: React.ChangeEvent<HTMLInputElement>) => setDraft({ ...draft, ai: { ...draft.ai, baseUrl: event.target.value } })} /></GridItem>

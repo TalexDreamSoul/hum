@@ -4,18 +4,9 @@ import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import { ApiError } from "./api";
 import { getDb } from "./database";
-import { stableJson } from "./song-specs";
-
-const reviewInput = z.object({
-  action: z.literal("review"),
-  reviewKind: z.enum(["content", "music"]),
-  verdict: z.enum(["pass", "fail", "needs_inpaint"]),
-  notes: z.string().trim().max(2000).default(""),
-  scores: z.record(z.string().max(80), z.union([z.number().finite(), z.string().max(240), z.boolean(), z.null()])).default({}),
-}).strict();
+import { requireCurrentCandidateHumanReviewRound } from "./governance";
 
 export const candidateActionSchema = z.discriminatedUnion("action", [
-  reviewInput,
   z.object({ action: z.literal("reject"), notes: z.string().trim().min(1).max(2000) }).strict(),
   z.object({ action: z.literal("needs_inpaint"), notes: z.string().trim().min(1).max(2000) }).strict(),
   z.object({ action: z.literal("approve_master") }).strict(),
@@ -94,14 +85,6 @@ interface CandidateDetailRow {
   updatedAt: number;
 }
 
-async function candidateRecord(id: string) {
-  const row = await getDb().prepare(`
-    SELECT id, batch_id, spec_id, status, artifact_path, output_hash FROM candidates WHERE id = ?
-  `).get(id) as CandidateRecord | undefined;
-  if (!row) throw new ApiError(404, "候选不存在");
-  return row;
-}
-
 export async function getCandidateDetail(id: string) {
   const db = getDb();
   const candidate = await db.prepare(`
@@ -138,61 +121,47 @@ export async function getCandidateDetail(id: string) {
 export async function actOnCandidate(id: string, input: unknown, userId: string) {
   const parsed = candidateActionSchema.parse(input);
   const db = getDb();
-  const candidate = await candidateRecord(id);
   const now = Date.now();
 
-  if (parsed.action === "review") {
-    if (candidate.status !== "generated") throw new ApiError(409, "只有通过自动质检的 generated 候选可以人工评审");
-    const otherKind = parsed.reviewKind === "content" ? "music" : "content";
-    const duplicateReviewer = await db.prepare(`
-      SELECT 1 FROM candidate_reviews
-      WHERE candidate_id = ? AND review_kind = ? AND reviewer_id = ? LIMIT 1
-    `).get(id, otherKind, userId);
-    if (duplicateReviewer) throw new ApiError(409, "内容评审与音乐评审必须由不同人员完成");
-    const scoresJson = stableJson(parsed.scores);
-    if (scoresJson.length > 10_000) throw new ApiError(400, "评审分数数据过大");
+  if (parsed.action === "reject" || parsed.action === "needs_inpaint") {
+    const status = parsed.action === "reject" ? "rejected" : "needs_inpaint";
     await db.transaction(async (transaction) => {
-      await transaction.prepare(`
-        INSERT INTO candidate_reviews (id, candidate_id, review_kind, verdict, scores_json, notes, reviewer_id, created_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(randomUUID(), id, parsed.reviewKind, parsed.verdict, scoresJson, parsed.notes, userId, now);
-      if (parsed.verdict === "fail") {
-        await transaction.prepare("UPDATE candidates SET status = 'rejected', error = ?, updated_at = ? WHERE id = ?").run(parsed.notes || `${parsed.reviewKind} 评审未通过`, now, id);
-      } else if (parsed.verdict === "needs_inpaint") {
-        await transaction.prepare("UPDATE candidates SET status = 'needs_inpaint', error = ?, updated_at = ? WHERE id = ?").run(parsed.notes || "需要局部重绘", now, id);
-      }
+      const candidate = await transaction.prepare(`
+        SELECT id, batch_id, spec_id, status, artifact_path, output_hash
+        FROM candidates
+        WHERE id = ?
+        FOR UPDATE
+      `).get<CandidateRecord>(id);
+      if (!candidate) throw new ApiError(404, "候选不存在");
+      if (!['generated', 'needs_inpaint'].includes(candidate.status)) throw new ApiError(409, "当前候选状态不能执行该操作");
+      await transaction.prepare("UPDATE candidates SET status = ?, error = ?, updated_at = ? WHERE id = ?").run(status, parsed.notes, now, id);
     })();
     return getCandidateDetail(id);
   }
 
-  if (parsed.action === "reject" || parsed.action === "needs_inpaint") {
-    if (!['generated', 'needs_inpaint'].includes(candidate.status)) throw new ApiError(409, "当前候选状态不能执行该操作");
-    const status = parsed.action === "reject" ? "rejected" : "needs_inpaint";
-    await db.prepare("UPDATE candidates SET status = ?, error = ?, updated_at = ? WHERE id = ?").run(status, parsed.notes, now, id);
-    return getCandidateDetail(id);
-  }
-
-  if (candidate.status !== "generated" || !candidate.artifact_path || !candidate.output_hash) {
-    throw new ApiError(409, "只有已持久化且通过自动质检的 generated 候选可以批准为母带");
-  }
-  const latestReviews = await db.prepare(`
-    SELECT review_kind, verdict, reviewer_id FROM candidate_reviews
-    WHERE candidate_id = ? AND review_kind IN ('auto','content','music')
-    ORDER BY created_at DESC
-  `).all(id) as Array<{ review_kind: string; verdict: string; reviewer_id: string | null }>;
-  const latest = new Map<string, { verdict: string; reviewerId: string | null }>();
-  for (const review of latestReviews) {
-    if (!latest.has(review.review_kind)) latest.set(review.review_kind, { verdict: review.verdict, reviewerId: review.reviewer_id });
-  }
-  if (["auto", "content", "music"].some((kind) => latest.get(kind)?.verdict !== "pass")) {
-    throw new ApiError(409, "自动、内容和音乐评审必须全部通过");
-  }
-  if (latest.get("content")?.reviewerId === latest.get("music")?.reviewerId) {
-    throw new ApiError(409, "内容评审与音乐评审必须由不同人员完成");
-  }
-
   const masterId = randomUUID();
   await db.transaction(async (transaction) => {
+    const candidate = await transaction.prepare(`
+      SELECT id, batch_id, spec_id, status, artifact_path, output_hash
+      FROM candidates
+      WHERE id = ?
+      FOR UPDATE
+    `).get<CandidateRecord>(id);
+    if (!candidate) throw new ApiError(404, "候选不存在");
+    if (candidate.status !== "generated" || !candidate.artifact_path || !candidate.output_hash) {
+      throw new ApiError(409, "只有已持久化且通过自动质检的 generated 候选可以批准为母带");
+    }
+    const auto = await transaction.prepare(`
+      SELECT verdict
+      FROM candidate_reviews
+      WHERE candidate_id = ? AND review_kind = 'auto'
+      ORDER BY created_at DESC
+      LIMIT 1
+    `).get<{ verdict: string }>(id);
+    if (auto?.verdict !== "pass") {
+      throw new ApiError(409, "自动评分只作为预筛，且必须通过后才可进入人工审批");
+    }
+    await requireCurrentCandidateHumanReviewRound(transaction, candidate.id);
     await transaction.prepare(`
       INSERT INTO approved_masters (
         id, spec_id, candidate_id, mixed_artifact_path, master_hash, approved_by, approved_at

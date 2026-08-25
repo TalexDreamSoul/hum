@@ -70,7 +70,7 @@ export function ScoreTrend({ points, threshold = 70, height = 220 }: { points: S
   );
 }
 
-/** 维度雷达：8 个维度对着门槛看，哪一角塌了一眼就见。 */
+/** 维度雷达：全部适用维度对着门槛看，哪一角塌了一眼就见。 */
 export function DimensionRadar({ dims, threshold = 70, height = 300 }: { dims: DimPoint[]; threshold?: number; height?: number }) {
   const usable = dims.filter((dim) => typeof dim.score === "number");
   if (usable.length < 3) return <Text variant="secondary">维度数据不足，画不了雷达图。</Text>;

@@ -8,14 +8,11 @@
  */
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Badge, Grid, GridItem, LinkButton, Text } from "@cloudflare/kumo";
+import { Badge, Button, Grid, GridItem, LinkButton, Text } from "@cloudflare/kumo";
 import { ConsoleSection } from "@/components/console/console-ui";
 import { buildLyricsTimeline, type LyricLineTiming } from "@/lib/analysis/lyrics-timeline";
 
 const SECTION_TAG = /^\[(.+)\]$/;
-
-/** 歌词卡贴在抽屉顶部跟着滚，内部自己滚动，用 Kumo 自带工具类。 */
-const STICKY_PANEL = "sticky top-0 max-h-[60vh] overflow-y-auto";
 
 /** 段落标记（[Chorus] 之类）不参与计时，但要显示在对应行前面。 */
 function sectionOf(lyrics: string): string[] {
@@ -79,7 +76,7 @@ export function CandidatePlayer({
   return (
     <Grid variant="1-2" gap="base">
       <GridItem>
-        <Grid gap="sm" className={STICKY_PANEL}>
+        <Grid gap="sm">
           <ConsoleSection
             title="歌词"
             status={
@@ -98,14 +95,14 @@ export function CandidatePlayer({
                     {line.section && (index === 0 || lines[index - 1].section !== line.section) && (
                       <Text variant="secondary" size="xs">{line.section}</Text>
                     )}
-                    <Text
-                      variant={index === activeIndex ? "body" : "secondary"}
-                      bold={index === activeIndex}
+                    <Button
+                      variant={index === activeIndex ? "secondary" : "ghost"}
                       size="sm"
+                      aria-label={`跳转到 ${line.start.toFixed(1)} 秒：${line.text}`}
                       onClick={() => seek(line)}
                     >
                       {line.text}
-                    </Text>
+                    </Button>
                   </Grid>
                 </div>
               ))}

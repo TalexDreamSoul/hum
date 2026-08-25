@@ -28,7 +28,8 @@ export default async function ProductionPage() {
         }}
         minimax={{
           ready: await isMiniMaxReady(settings),
-          batchModel: settings.minimax.batchModel,
+          defaultModel: settings.minimax.defaultModel,
+          enabledModels: settings.minimax.enabledModels,
           requestsPerMinute: settings.minimax.requestsPerMinute,
         }}
       />

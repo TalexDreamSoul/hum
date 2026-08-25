@@ -1,5 +1,7 @@
 import "server-only";
 
+import { MOCK_PROVIDER, mockMarker } from "./mock-provider";
+
 import {
   aiEndpoint,
   aiRequestBody,
@@ -38,6 +40,8 @@ export interface AiTextResult {
   content: string;
   protocol: AiWireProtocol;
   model: string;
+  mock: true;
+  provider: typeof MOCK_PROVIDER;
 }
 
 type AttemptFailure = { ok: false; status: number; message: string; mismatch: boolean };
@@ -123,32 +127,17 @@ async function attemptWithTemperatureFallback(protocol: AiWireProtocol, request:
  * 协议、请求体和返回体形状的差异都在这里吸收，调用方只关心 content。
  */
 export async function callAiText(request: AiTextRequest): Promise<AiTextResult> {
-  const baseUrl = request.baseUrl.trim();
-  if (!baseUrl || !request.apiKey.trim() || !request.model.trim()) {
-    throw new ApiError(409, "请先在系统配置中填写完整的 AI Base URL、API Key 和模型");
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(baseUrl);
-  } catch {
-    throw new ApiError(409, "AI Base URL 配置无效");
-  }
-  if (parsed.protocol !== "https:") throw new ApiError(409, "AI Base URL 必须使用 HTTPS");
-
-  const pinned = protocolFromBaseUrl(baseUrl)
-    ?? (request.protocol && request.protocol !== "auto" ? request.protocol : null);
-  const order: AiWireProtocol[] = pinned ? [pinned] : ["chat", "responses"];
-
-  let failure: AttemptFailure | null = null;
-  for (const protocol of order) {
-    const result = await attemptWithTemperatureFallback(protocol, request);
-    if (result.ok) return { content: result.content, protocol, model: request.model };
-    failure = result;
-    if (!result.mismatch) break;
-  }
-
-  if (!failure) throw new ApiError(502, "AI 调用失败");
-  if (failure.status === 0) throw new ApiError(502, `AI 调用失败：${failure.message || "上游连接失败或请求被中断"}`);
-  if (failure.status === 200) throw new ApiError(502, "AI 返回内容为空或格式无法识别");
-  throw new ApiError(502, `AI 调用失败（上游 ${failure.status}${failure.message ? `：${failure.message}` : ""}）`);
+  if (request.signal?.aborted) throw new DOMException("Mock AI request cancelled", "AbortError");
+  const lastMessage = [...request.messages].reverse().find((message) => message.role === "user")?.content.trim() ?? "";
+  const content = lastMessage
+    ? `Mock provider 已接收 ${lastMessage.slice(0, 120)}；当前环境不会请求外部 AI。`
+    : "Mock provider 已就绪；当前环境不会请求外部 AI。";
+  request.onExchange?.({
+    protocol: "chat",
+    endpoint: "mock://ai",
+    requestBody: { ...mockMarker(), messageCount: request.messages.length },
+    status: 200,
+    responseText: JSON.stringify({ ...mockMarker(), content }),
+  });
+  return { content, protocol: "chat", model: "mock", ...mockMarker() };
 }

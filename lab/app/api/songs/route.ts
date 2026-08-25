@@ -1,9 +1,8 @@
-import { randomUUID } from "node:crypto";
 import { after, NextResponse } from "next/server";
 import { z } from "zod";
-import { apiErrorResponse, ApiError, requireApiUser } from "@/lib/server/api";
-import { recordAudit } from "@/lib/server/auth";
+import { apiErrorResponse, requireApiUser } from "@/lib/server/api";
 import { getDb } from "@/lib/server/database";
+import { analyzeQiniuMediaAsset, registerUploadedSongMedia } from "@/lib/server/media";
 import { runTrackedJob } from "@/lib/server/jobs";
 import { analyzeUploadedSong } from "@/lib/server/song-analysis";
 
@@ -15,6 +14,8 @@ const uploadedInput = z.object({
   hash: z.string().min(1).max(200),
   fsize: z.number().int().positive(),
   mimeType: z.string().max(160),
+  contentHash: z.string().min(16).max(128).optional(),
+  mediaKind: z.enum(["audio", "video", "screen_recording", "document", "image"]).optional(),
   scene: z.enum(["general", "morning", "bath", "commute", "meal", "play", "focus", "travel", "bedtime"]).default("general"),
 });
 
@@ -38,40 +39,30 @@ export async function POST(request: Request) {
   try {
     const user = await requireApiUser(["admin", "uploader"]);
     const input = uploadedInput.parse(await request.json());
-    const db = getDb();
-    const grant = await db.prepare(`
-      SELECT user_id, original_name, mime_type, size_bytes, expires_at
-      FROM upload_grants WHERE object_key = ?
-    `).get(input.key) as
-      | { user_id: string; original_name: string; mime_type: string; size_bytes: number; expires_at: number }
-      | undefined;
-    if (!grant || grant.expires_at <= Date.now()) throw new ApiError(410, "上传授权已失效，请重新上传");
-    if (grant.user_id !== user.id || grant.size_bytes !== input.fsize) throw new ApiError(403, "上传结果与授权不匹配");
-
-    const songId = randomUUID();
-    const now = Date.now();
-    const mimeType = input.mimeType || grant.mime_type;
-    await db.transaction(async (transaction) => {
-      await transaction.prepare(`
-        INSERT INTO songs (id, object_key, original_name, mime_type, size_bytes, qiniu_hash, status, analysis_scene, uploaded_by, created_at, updated_at)
-        VALUES (?, ?, ?, ?, ?, ?, 'uploaded', ?, ?, ?, ?)
-      `).run(songId, input.key, grant.original_name, mimeType, input.fsize, input.hash, input.scene, user.id, now, now);
-      await transaction.prepare("DELETE FROM upload_grants WHERE object_key = ?").run(input.key);
-    })();
-    await recordAudit(user.id, "song.upload", "song", songId, { objectKey: input.key, sizeBytes: input.fsize });
-    if (mimeType.startsWith("audio/")) {
+    const registration = await registerUploadedSongMedia(input, user.id);
+    if (!registration.deduplicated && registration.mediaKind === "audio") {
       after(async () => {
         try {
           await runTrackedJob(
-            { kind: "song_analysis", title: `分析上传歌曲：${grant.original_name}`, userId: user.id, input: { songId, scene: input.scene } },
-            async (job) => analyzeUploadedSong(songId, new AbortController().signal, job),
+            { kind: "song_analysis", title: `分析上传歌曲：${input.key}`, userId: user.id, input: { songId: registration.songId, scene: input.scene, assetId: registration.assetId } },
+            async (job) => analyzeUploadedSong(registration.songId, new AbortController().signal, job),
           );
         } catch {
-          // 失败详情由任务队列持久化，上传登记本身仍然有效。
+          // 分析失败留在任务记录中；已登记媒体仍可重试。
         }
       });
+    } else if (!registration.deduplicated && (registration.mediaKind === "video" || registration.mediaKind === "screen_recording")) {
+      after(async () => {
+        await analyzeQiniuMediaAsset(registration.assetId, new AbortController().signal).catch(() => undefined);
+      });
     }
-    return NextResponse.json({ id: songId, status: "uploaded" }, { status: 201 });
+    return NextResponse.json({
+      id: registration.songId,
+      assetId: registration.assetId,
+      mediaKind: registration.mediaKind,
+      status: registration.status,
+      deduplicated: registration.deduplicated,
+    }, { status: registration.deduplicated ? 200 : 201 });
   } catch (error) {
     return apiErrorResponse(error);
   }

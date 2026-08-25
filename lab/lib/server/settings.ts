@@ -3,7 +3,8 @@ import "server-only";
 import { decryptSecret, encryptSecret } from "./crypto";
 import { getDb } from "./database";
 import { isAiProtocol, type AiProtocol } from "../ai-endpoint";
-import { MINIMAX_BATCH_MODELS, type MiniMaxBatchModel, type MiniMaxCurrentMusicModel } from "../minimax";
+import type { MiniMaxCurrentMusicModel } from "../minimax";
+import { MOCK_ENABLED, MOCK_MUSIC_MODEL, MOCK_PROVIDER, MOCK_REQUESTS_PER_MINUTE, mockMarker } from "./mock-provider";
 
 const SECRET_KEYS: Record<string, true> = {
   "qiniu.accessKey": true,
@@ -14,6 +15,8 @@ const SECRET_KEYS: Record<string, true> = {
 };
 
 export interface ProviderSettings {
+  mockEnabled: true;
+  mockProvider: typeof MOCK_PROVIDER;
   publicUrl: string;
   qiniu: {
     enabled: boolean;
@@ -40,12 +43,14 @@ export interface ProviderSettings {
     baseUrl: string;
     apiKey: string;
     defaultModel: MiniMaxCurrentMusicModel;
-    batchModel: MiniMaxBatchModel;
+    enabledModels: MiniMaxCurrentMusicModel[];
     requestsPerMinute: number;
   };
 }
 
 const DEFAULTS: ProviderSettings = {
+  mockEnabled: MOCK_ENABLED,
+  mockProvider: MOCK_PROVIDER,
   publicUrl: "",
   qiniu: {
     enabled: false,
@@ -60,31 +65,26 @@ const DEFAULTS: ProviderSettings = {
   feishu: { enabled: false, appId: "", appSecret: "" },
   ai: { baseUrl: "", apiKey: "", model: "", protocol: "auto" },
   minimax: {
-    baseUrl: "https://api.minimaxi.com",
+    baseUrl: "mock://music",
     apiKey: "",
-    defaultModel: "music-3.0-free",
-    batchModel: "music-3.0-free",
-    requestsPerMinute: 3,
+    defaultModel: MOCK_MUSIC_MODEL,
+    enabledModels: [MOCK_MUSIC_MODEL],
+    requestsPerMinute: MOCK_REQUESTS_PER_MINUTE,
   },
-};
+};;
 
 export async function getProviderSettings(): Promise<ProviderSettings> {
-  const rows = await getDb().prepare("SELECT key, value, encrypted FROM settings").all() as Array<{ key: string; value: string; encrypted: number }>;
+  const rows = await getDb().prepare("SELECT key, value, encrypted FROM settings").all() as Array<{ key: string; value: string; encrypted: number }> ;
   const values = new Map(rows.map((row) => [row.key, row.encrypted ? decryptSecret(row.value) : row.value]));
   const readValue = (key: string) => values.get(key) ?? "";
   const boolValue = (key: string, fallback: boolean) => values.has(key) ? readValue(key) === "1" : fallback;
   const region = readValue("qiniu.region");
   const allowedRegions: Record<string, true> = { z0: true, z1: true, z2: true, na0: true, as0: true };
   const rawAiProtocol = readValue("ai.protocol");
-  const rawBatchModel = readValue("minimax.batchModel");
-  const rawRequestsPerMinute = Number.parseInt(readValue("minimax.requestsPerMinute"), 10);
-  const batchModel = MINIMAX_BATCH_MODELS.includes(rawBatchModel as MiniMaxBatchModel)
-    ? rawBatchModel as MiniMaxBatchModel
-    : DEFAULTS.minimax.batchModel;
-  const requestsPerMinute = Number.isInteger(rawRequestsPerMinute) && rawRequestsPerMinute >= 1 && rawRequestsPerMinute <= 60
-    ? rawRequestsPerMinute
-    : DEFAULTS.minimax.requestsPerMinute;
+
   return {
+    mockEnabled: MOCK_ENABLED,
+    mockProvider: MOCK_PROVIDER,
     publicUrl: readValue("app.publicUrl"),
     qiniu: {
       enabled: boolValue("qiniu.enabled", DEFAULTS.qiniu.enabled),
@@ -108,21 +108,28 @@ export async function getProviderSettings(): Promise<ProviderSettings> {
       protocol: isAiProtocol(rawAiProtocol) ? rawAiProtocol : DEFAULTS.ai.protocol,
     },
     minimax: {
-      baseUrl: readValue("minimax.baseUrl") || DEFAULTS.minimax.baseUrl,
-      apiKey: readValue("minimax.apiKey"),
-      defaultModel: readValue("minimax.defaultModel") === "music-3.0" ? "music-3.0" : "music-3.0-free",
-      batchModel,
-      requestsPerMinute,
+      baseUrl: DEFAULTS.minimax.baseUrl,
+      apiKey: "",
+      defaultModel: MOCK_MUSIC_MODEL,
+      enabledModels: [MOCK_MUSIC_MODEL],
+      requestsPerMinute: MOCK_REQUESTS_PER_MINUTE,
     },
   };
 }
 
 export async function writeProviderSettings(values: Record<string, string | boolean | undefined>, userId: string): Promise<void> {
-  const db = getDb();
+  const lockedMockKeys: Record<string, true> = {
+    "minimax.baseUrl": true,
+    "minimax.apiKey": true,
+    "minimax.defaultModel": true,
+    "minimax.enabledModels": true,
+    "minimax.requestsPerMinute": true,
+  };
+  const database = getDb();
   const now = Date.now();
-  await db.transaction(async (transaction) => {
+  await database.transaction(async (transaction) => {
     for (const [key, input] of Object.entries(values)) {
-      if (input === undefined) continue;
+      if (input === undefined || lockedMockKeys[key]) continue;
       const raw = typeof input === "boolean" ? (input ? "1" : "0") : input.trim();
       if (SECRET_KEYS[key] && raw === "") continue;
       if (raw === "__CLEAR_SECRET__" && SECRET_KEYS[key]) {
@@ -145,6 +152,8 @@ export async function writeProviderSettings(values: Record<string, string | bool
 export async function getMaskedProviderSettings() {
   const settings = await getProviderSettings();
   return {
+    mockEnabled: settings.mockEnabled,
+    provider: settings.mockProvider,
     publicUrl: settings.publicUrl,
     qiniu: {
       enabled: settings.qiniu.enabled,
@@ -169,14 +178,16 @@ export async function getMaskedProviderSettings() {
       model: settings.ai.model,
       protocol: settings.ai.protocol,
       ready: await isAiReady(settings),
+      ...mockMarker(),
     },
     minimax: {
       baseUrl: settings.minimax.baseUrl,
-      apiKeySet: Boolean(settings.minimax.apiKey),
+      apiKeySet: false,
       defaultModel: settings.minimax.defaultModel,
-      batchModel: settings.minimax.batchModel,
+      enabledModels: settings.minimax.enabledModels,
       requestsPerMinute: settings.minimax.requestsPerMinute,
       ready: await isMiniMaxReady(settings),
+      ...mockMarker(),
     },
   };
 }
@@ -191,11 +202,10 @@ export async function isFeishuReady(settings?: ProviderSettings): Promise<boolea
   return f.enabled && Boolean(f.appId && f.appSecret);
 }
 
-export async function isAiReady(settings?: ProviderSettings): Promise<boolean> {
-  const ai = (settings ?? await getProviderSettings()).ai;
-  return Boolean(ai.baseUrl && ai.apiKey && ai.model);
+export async function isAiReady(_settings?: ProviderSettings): Promise<boolean> {
+  return MOCK_ENABLED;
 }
 
-export async function isMiniMaxReady(settings?: ProviderSettings): Promise<boolean> {
-  return Boolean((settings ?? await getProviderSettings()).minimax.apiKey);
+export async function isMiniMaxReady(_settings?: ProviderSettings): Promise<boolean> {
+  return MOCK_ENABLED;
 }

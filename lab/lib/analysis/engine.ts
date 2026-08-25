@@ -44,6 +44,7 @@ export async function analyze(
   sampleRate: number,
   scene: SceneKey,
   onStage?: (stage: StageKey) => void,
+  targetDurationSec?: number,
 ): Promise<AnalysisReport> {
   const mono = toMono(channels);
   const { mid, side, isMono } = midSide(channels);
@@ -74,7 +75,7 @@ export async function analyze(
 
   onStage?.("score");
   await yieldUI();
-  const score = computeScore(scene, loudness, tempo, pitch, spectral, repetition, gaps);
+  const score = computeScore(scene, loudness, tempo, pitch, spectral, repetition, gaps, targetDurationSec);
 
   return {
     meta: {

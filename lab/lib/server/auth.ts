@@ -7,7 +7,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import type { NextRequest } from "next/server";
 import { hashPassword, verifyPassword } from "./crypto";
-import { cleanExpiredSecurityRows, getDb } from "./database";
+import { cleanExpiredSecurityRows, getDb, type HumDatabase } from "./database";
 import { getDataDir, readOrCreatePrivateFile } from "./data-dir";
 
 export type UserRole = "admin" | "approver" | "uploader";
@@ -209,8 +209,9 @@ export async function recordAudit(
   targetType: string,
   targetId: string,
   detail: Record<string, unknown> = {},
+  database: HumDatabase = getDb(),
 ): Promise<void> {
-  await getDb().prepare(`
+  await database.prepare(`
     INSERT INTO audit_log (actor_user_id, action, target_type, target_id, detail_json, created_at)
     VALUES (?, ?, ?, ?, ?, ?)
   `).run(actorUserId, action, targetType, targetId, JSON.stringify(detail), Date.now());

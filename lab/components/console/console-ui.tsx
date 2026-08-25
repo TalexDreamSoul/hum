@@ -1,10 +1,7 @@
 "use client";
 
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { Button, Dialog, Grid, LayerCard, Pagination, Text, useKumoToastManager } from "@cloudflare/kumo";
-
-/** 右侧抽屉：Kumo 没有 Drawer，用 Dialog 加它自带的定位工具类改成贴边全高。 */
-const DRAWER_CLASS = "top-0 bottom-0 left-auto right-0 h-full max-w-full translate-x-0 translate-y-0 rounded-none overflow-y-auto p-6";
 
 export function ConsoleDrawer({
   open,
@@ -21,7 +18,7 @@ export function ConsoleDrawer({
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
-      <Dialog size="xl" className={DRAWER_CLASS}>
+      <Dialog size="xl">
         <Grid gap="base">
           {/* 关闭按钮放最前面，抽屉打开时焦点落在这里，不会被内部输入框拽着滚下去 */}
           <Dialog.Close render={(props) => <Button variant="secondary" size="sm" {...props}>关闭</Button>} />
@@ -75,11 +72,22 @@ export function pageSlice<T>(rows: T[], page: number, pageSize: number): T[] {
 /** 后台统一的轻提示：成功、失败都走 toast，页面里只留常驻状态用的 Banner。 */
 export function useConsoleToast() {
   const toasts = useKumoToastManager();
-  return {
-    success: (title: string, description?: string) => toasts.add({ title, description, variant: "success" }),
-    error: (title: string, description?: string) => toasts.add({ title, description, variant: "error" }),
-    info: (title: string, description?: string) => toasts.add({ title, description, variant: "info" }),
-  };
+  const toastsRef = useRef(toasts);
+  useEffect(() => {
+    toastsRef.current = toasts;
+  }, [toasts]);
+
+  const success = useCallback((title: string, description?: string) => {
+    toastsRef.current.add({ title, description, variant: "success" });
+  }, []);
+  const error = useCallback((title: string, description?: string) => {
+    toastsRef.current.add({ title, description, variant: "error" });
+  }, []);
+  const info = useCallback((title: string, description?: string) => {
+    toastsRef.current.add({ title, description, variant: "info" });
+  }, []);
+
+  return useMemo(() => ({ success, error, info }), [success, error, info]);
 }
 
 export function ConsolePage({
@@ -93,7 +101,7 @@ export function ConsolePage({
 }) {
   return (
     // 内容区限宽，避免超宽屏上表单被拉成一整行。
-    <Grid gap="base" className="mx-auto w-full max-w-[1400px]">
+    <Grid gap="base">
       <Text variant="heading1" as="h1">{title}</Text>
       <Text variant="secondary">{description}</Text>
       {children}

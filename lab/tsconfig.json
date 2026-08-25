@@ -32,7 +32,6 @@
   "include": [
     "**/*.ts",
     "**/*.tsx",
-    ".next-verify/types/**/*.ts",
     ".next/types/**/*.ts",
     "next-env.d.ts"
   ],

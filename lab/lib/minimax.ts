@@ -3,8 +3,6 @@ export const MINIMAX_CURRENT_MUSIC_MODELS = ["music-3.0-free", "music-3.0"] as c
 export type MiniMaxCurrentMusicModel = typeof MINIMAX_CURRENT_MUSIC_MODELS[number];
 export type MiniMaxMusicModel = MiniMaxCurrentMusicModel | "music-2.6-free" | "music-2.6";
 
-export const MINIMAX_BATCH_MODELS = ["music-3.0-free", "music-2.6-free"] as const;
-export type MiniMaxBatchModel = typeof MINIMAX_BATCH_MODELS[number];
 
 export const MINIMAX_MUSIC_MODEL_LABELS: Record<MiniMaxMusicModel, string> = {
   "music-3.0-free": "Music 3.0 免费版",

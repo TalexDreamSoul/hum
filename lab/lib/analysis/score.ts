@@ -1,5 +1,5 @@
 /**
- * 评分模型：8 个维度、权重合计 100，场景预设调整目标带。
+ * 评分模型：9 个维度、权重合计 100；生产候选可用 SongSpec 覆盖场景时长目标。
  * 阈值全部集中在这个文件——评分标准即代码，页面上的解释与这里一一对应。
  */
 
@@ -27,20 +27,23 @@ export interface ScenePreset {
   bpmBand: [number, number, number, number];
   bpmAnchor: number | null;
   lufsTarget: number;
+  /** 产品侧的单曲目标；不是宣称所有儿童都有同一个注意时长。 */
+  durTargetSec: number;
+  /** 场景硬上限，超过后时长维度归零。 */
   durMaxSec: number;
   lraBand: [number, number, number, number];
 }
 
 export const SCENES: Record<SceneKey, ScenePreset> = {
-  general: { label: "通用", bpmBand: [62, 84, 152, 186], bpmAnchor: null, lufsTarget: -16, durMaxSec: 240, lraBand: [1.5, 3, 9, 14] },
-  morning: { label: "晨间", bpmBand: [96, 116, 148, 172], bpmAnchor: 132, lufsTarget: -16, durMaxSec: 100, lraBand: [1.5, 3, 9, 14] },
-  commute: { label: "通勤", bpmBand: [88, 106, 134, 156], bpmAnchor: 120, lufsTarget: -16, durMaxSec: 190, lraBand: [1.5, 3, 8, 12] },
-  meal:    { label: "用餐", bpmBand: [76, 92, 117, 136], bpmAnchor: 104, lufsTarget: -18, durMaxSec: 160, lraBand: [1.5, 3, 9, 14] },
-  bath:    { label: "洗漱", bpmBand: [92, 108, 138, 160], bpmAnchor: 122, lufsTarget: -16, durMaxSec: 130, lraBand: [1.5, 3, 9, 14] },
-  play:    { label: "玩耍", bpmBand: [104, 120, 158, 180], bpmAnchor: 138, lufsTarget: -15, durMaxSec: 210, lraBand: [1.5, 3, 9, 14] },
-  focus:   { label: "专注复习", bpmBand: [72, 84, 112, 130], bpmAnchor: 96, lufsTarget: -18, durMaxSec: 300, lraBand: [1, 2, 7, 11] },
-  travel:  { label: "长途出行", bpmBand: [82, 96, 130, 152], bpmAnchor: 112, lufsTarget: -16, durMaxSec: 300, lraBand: [1.5, 3, 9, 14] },
-  bedtime: { label: "睡前", bpmBand: [56, 67, 86, 100], bpmAnchor: 76, lufsTarget: -18, durMaxSec: 250, lraBand: [1, 2, 7, 11] },
+  general: { label: "通用", bpmBand: [62, 84, 152, 186], bpmAnchor: null, lufsTarget: -16, durTargetSec: 90, durMaxSec: 240, lraBand: [1.5, 3, 9, 14] },
+  morning: { label: "晨间", bpmBand: [96, 116, 148, 172], bpmAnchor: 132, lufsTarget: -16, durTargetSec: 60, durMaxSec: 100, lraBand: [1.5, 3, 9, 14] },
+  commute: { label: "通勤", bpmBand: [88, 106, 134, 156], bpmAnchor: 120, lufsTarget: -16, durTargetSec: 90, durMaxSec: 190, lraBand: [1.5, 3, 8, 12] },
+  meal:    { label: "用餐", bpmBand: [76, 92, 117, 136], bpmAnchor: 104, lufsTarget: -18, durTargetSec: 75, durMaxSec: 160, lraBand: [1.5, 3, 9, 14] },
+  bath:    { label: "洗漱", bpmBand: [92, 108, 138, 160], bpmAnchor: 122, lufsTarget: -16, durTargetSec: 60, durMaxSec: 130, lraBand: [1.5, 3, 9, 14] },
+  play:    { label: "玩耍", bpmBand: [104, 120, 158, 180], bpmAnchor: 138, lufsTarget: -15, durTargetSec: 90, durMaxSec: 210, lraBand: [1.5, 3, 9, 14] },
+  focus:   { label: "专注复习", bpmBand: [72, 84, 112, 130], bpmAnchor: 96, lufsTarget: -18, durTargetSec: 120, durMaxSec: 300, lraBand: [1, 2, 7, 11] },
+  travel:  { label: "长途出行", bpmBand: [82, 96, 130, 152], bpmAnchor: 112, lufsTarget: -16, durTargetSec: 150, durMaxSec: 300, lraBand: [1.5, 3, 9, 14] },
+  bedtime: { label: "睡前", bpmBand: [56, 67, 86, 100], bpmAnchor: 76, lufsTarget: -18, durTargetSec: 120, durMaxSec: 250, lraBand: [1, 2, 7, 11] },
 };
 
 export interface DimScore {
@@ -84,6 +87,7 @@ export function computeScore(
   spec: SpectralResult,
   rep: RepetitionResult,
   gaps: GapsResult,
+  targetDurationSec?: number,
 ): ScoreReport {
   const p = SCENES[scene];
   const dims: DimScore[] = [];
@@ -98,7 +102,7 @@ export function computeScore(
     if (loud.truePeakDbtp > 0) { s = Math.max(0, s - 35); tpNote = `；真峰值 ${r1(loud.truePeakDbtp)} dBTP 已超 0，存在削波`; }
     else if (loud.truePeakDbtp > -1) { s = Math.max(0, s - 15); tpNote = `；真峰值 ${r1(loud.truePeakDbtp)} dBTP 高于 −1 红线`; }
     dims.push({
-      key: "loudness", label: "响度与安全", weight: 15, score: Math.round(s),
+      key: "loudness", label: "响度与安全", weight: 14, score: Math.round(s),
       detail: `整体 ${r1(loud.integratedLufs)} LUFS（目标 ${t}±2.5）${tpNote}`,
     });
     if (Math.abs(loud.integratedLufs - t) <= 2.5 && loud.truePeakDbtp <= -1) {
@@ -116,7 +120,7 @@ export function computeScore(
     const [a, b, c, d] = p.lraBand;
     const s = bandScore(loud.lra, a, b, c, d);
     dims.push({
-      key: "dynamics", label: "动态起伏", weight: 8, score: Math.round(s),
+      key: "dynamics", label: "动态起伏", weight: 7, score: Math.round(s),
       detail: `LRA ${r1(loud.lra)} LU（目标 ${b}–${c}）`,
     });
     if (loud.lra < b) findings.push({ tone: "warn", text: `动态范围 ${r1(loud.lra)} LU 偏平，从头到尾一堵墙的声音容易听觉疲劳。` });
@@ -141,7 +145,7 @@ export function computeScore(
       if (best >= 90) findings.push({ tone: "good", text: `节奏 ${shown} BPM 落在${p.label}场景带（${b}–${c}）。学龄前儿童自发运动节奏约 150 BPM，越接近场景锚点越容易跟拍跟唱。` });
       else if (best < 60) findings.push({ tone: "warn", text: `节奏 ${shown} BPM 偏离${p.label}场景带（${b}–${c}），跟唱与场景氛围都吃亏。` });
     }
-    dims.push({ key: "tempo", label: "节奏适配", weight: 14, score: s, detail });
+    dims.push({ key: "tempo", label: "节奏适配", weight: 13, score: s, detail });
   }
 
   // ── 4 适唱音域（15）──
@@ -159,7 +163,7 @@ export function computeScore(
       else if (pitch.shareComfort < 0.35) findings.push({ tone: "bad", text: `旋律只有 ${Math.round(pitch.shareComfort * 100)}% 落在 D4–B4 舒适唱区，孩子生理上唱不上去/唱不下来，接唱机制会失效。` });
       if ((pitch.spanSemitones ?? 0) > 12) findings.push({ tone: "warn", text: `音域跨度 ${pitch.spanSemitones} 半音，超过一个八度，对 3–6 岁偏难。` });
     }
-    dims.push({ key: "range", label: "适唱音域", weight: 15, score: s, detail });
+    dims.push({ key: "range", label: "适唱音域", weight: 14, score: s, detail });
   }
 
   // ── 5 人声清晰度（代理）（14）──
@@ -184,14 +188,14 @@ export function computeScore(
         findings.push({ tone: "warn", text: `音节率代理 ${spec.syllableRate}/s 偏快，低龄儿童跟不上词。` });
       }
     }
-    dims.push({ key: "clarity", label: "人声清晰度", weight: 14, score: s, detail });
+    dims.push({ key: "clarity", label: "人声清晰度", weight: 13, score: s, detail });
   }
 
   // ── 6 重复与结构（14）──
   {
     const s = Math.round(bandScore(rep.repeatedShare, 0.12, 0.32, 0.72, 0.88));
     dims.push({
-      key: "repetition", label: "重复与结构", weight: 14, score: s,
+      key: "repetition", label: "重复与结构", weight: 13, score: s,
       detail: `重复帧占比 ${Math.round(rep.repeatedShare * 100)}%（目标 32–72%），重复段 ${rep.sectionCount} 处`,
     });
     if (rep.repeatedShare >= 0.32 && rep.repeatedShare <= 0.72) {
@@ -218,7 +222,7 @@ export function computeScore(
         findings.push({ tone: "good", text: `每分钟 ${gaps.gapsPerMin} 处留白、平均 ${gaps.meanGapMs} ms——有天然的接唱位，可直接做挖空版本。` });
       }
     }
-    dims.push({ key: "gaps", label: "留白接唱", weight: 12, score: s, detail });
+    dims.push({ key: "gaps", label: "留白接唱", weight: 11, score: s, detail });
   }
 
   // ── 8 频谱舒适度（8）──
@@ -227,21 +231,36 @@ export function computeScore(
     const s2 = bandScore(spec.lowShare, -1, 0, 0.12, 0.22);
     const s = Math.round(0.6 * s1 + 0.4 * s2);
     dims.push({
-      key: "spectral", label: "频谱舒适度", weight: 8, score: s,
+      key: "spectral", label: "频谱舒适度", weight: 7, score: s,
       detail: `>8 kHz 占 ${Math.round(spec.highShare * 100)}%，<60 Hz 占 ${Math.round(spec.lowShare * 100)}%，质心 ${spec.centroidHz} Hz`,
     });
     if (spec.highShare > 0.07) findings.push({ tone: "warn", text: `高频（>8 kHz）能量占 ${Math.round(spec.highShare * 100)}%，齿音/毛刺偏多，儿童对高频更敏感，久听易疲劳。` });
     if (spec.lowShare > 0.12) findings.push({ tone: "warn", text: `超低频（<60 Hz）占 ${Math.round(spec.lowShare * 100)}%，小音箱放不出来还挤占动态余量。` });
   }
 
-  // ── 时长（不计权，只提示并轻扣总分）──
-  let durationPenalty = 0;
-  if (gaps.durationSec > p.durMaxSec * 1.5) {
-    durationPenalty = 8;
-    findings.push({ tone: "warn", text: `时长 ${Math.round(gaps.durationSec)}s，远超${p.label}场景上限 ${p.durMaxSec}s，孩子的注意窗口撑不住整首。` });
-  } else if (gaps.durationSec > p.durMaxSec) {
-    durationPenalty = 4;
-    findings.push({ tone: "info", text: `时长 ${Math.round(gaps.durationSec)}s，略超${p.label}场景上限 ${p.durMaxSec}s。` });
+  // ── 9 时长适配（8）──
+  {
+    const observed = gaps.durationSec;
+    const target = targetDurationSec ?? p.durTargetSec;
+    const hardMin = Math.max(10, Math.round(target * 0.5));
+    const softMin = Math.max(hardMin, Math.round(target * 0.8));
+    const softMax = Math.min(p.durMaxSec, Math.round(target * 1.2));
+    const hardMax = Math.max(softMax, Math.min(p.durMaxSec, Math.round(target * 1.6)));
+    const score = Math.round(bandScore(observed, hardMin, softMin, softMax, hardMax));
+    const targetSource = targetDurationSec ? "SongSpec" : `${p.label}场景`;
+    dims.push({
+      key: "duration", label: "时长适配", weight: 8, score,
+      detail: `实际 ${Math.round(observed)}s；${targetSource}目标 ${target}s，适配带 ${softMin}–${softMax}s，硬上限 ${hardMax}s`,
+    });
+    if (observed >= softMin && observed <= softMax) {
+      findings.push({ tone: "good", text: `时长 ${Math.round(observed)}s 落在当前目标带 ${softMin}–${softMax}s，适合重复播放；这个区间是产品生产目标，不等同于所有儿童的普适偏好。` });
+    } else if (observed > hardMax) {
+      findings.push({ tone: "warn", text: `时长 ${Math.round(observed)}s 超过当前硬上限 ${hardMax}s，知识密度和重复成本偏高，建议拆成更短的单知识点版本。` });
+    } else if (observed < hardMin) {
+      findings.push({ tone: "warn", text: `时长只有 ${Math.round(observed)}s，低于当前下限 ${hardMin}s，可能不足以完成知识陈述、回忆钩子和一次复现。` });
+    } else {
+      findings.push({ tone: "info", text: `时长 ${Math.round(observed)}s 位于可接受边缘，后续应结合完播率、主动重播和 24 小时记忆结果校准。` });
+    }
   }
 
   if (!hasVocal) {
@@ -252,7 +271,7 @@ export function computeScore(
   const valid = dims.filter((d) => d.score !== null);
   const wSum = valid.reduce((a, d) => a + d.weight, 0);
   const raw = valid.reduce((a, d) => a + (d.score as number) * d.weight, 0) / (wSum || 1);
-  const total = Math.max(0, Math.round(raw - durationPenalty));
+  const total = Math.max(0, Math.round(raw));
   const grade = total >= 85 ? "A" : total >= 70 ? "B" : total >= 55 ? "C" : "D";
 
   return { total, grade, dims, findings, scene };

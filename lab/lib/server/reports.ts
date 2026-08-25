@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import type { SceneKey } from "../analysis/score";
 import type { CandidateAutoAssessment } from "./candidate-analysis";
+import type { LyricStructureAssessment } from "../song-spec";
 import { ApiError } from "./api";
 import { getDb, type HumDatabase } from "./database";
 
@@ -154,6 +155,51 @@ export async function saveCandidateEvaluation(
     Date.now(),
   );
   await insertDimensions(database, reportId, assessment);
+  return reportId;
+}
+
+export async function saveCandidateLyricEvaluation(
+  database: HumDatabase,
+  candidateId: string,
+  assessment: LyricStructureAssessment,
+): Promise<string> {
+  const source = await database.prepare(`
+    SELECT c.id, c.provider, c.model, c.spec_id, c.prompt_snapshot_id,
+           s.revision, s.content_hash, s.content_json, COALESCE(ps.skill_bundle_hash, '') AS skill_bundle_hash
+    FROM candidates c JOIN song_specs s ON s.id = c.spec_id
+    LEFT JOIN prompt_snapshots ps ON ps.id = c.prompt_snapshot_id
+    WHERE c.id = ?
+  `).get(candidateId) as {
+    provider: string; model: string; spec_id: string; prompt_snapshot_id: string | null; skill_bundle_hash: string;
+    revision: number; content_hash: string; content_json: string;
+  } | undefined;
+  if (!source) throw new ApiError(404, "候选不存在，无法保存歌词评测");
+  const existing = await database.prepare(`
+    SELECT id FROM evaluation_reports
+    WHERE candidate_id = ? AND report_kind = 'lyric' AND evaluator = 'hum-lyric-structure' AND evaluator_version = '1'
+  `).get(candidateId) as { id: string } | undefined;
+  if (existing) return existing.id;
+
+  const content = JSON.parse(source.content_json) as { domain?: string; audience?: string; scene?: SceneKey };
+  const reportId = randomUUID();
+  await database.prepare(`
+    INSERT INTO evaluation_reports (
+      id, subject_type, subject_id, candidate_id, song_id, report_kind, evaluator, evaluator_version,
+      verdict, total_score, grade, domain, age_band, scene, provider, model,
+      spec_id, spec_revision, spec_content_hash, prompt_snapshot_id, skill_bundle_hash, summary, raw_json, created_at
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    reportId, "candidate", candidateId, candidateId, null, "lyric", "hum-lyric-structure", "1",
+    assessment.passed ? "pass" : "fail", assessment.total, "", content.domain ?? "", ageBandOf(content.audience ?? ""),
+    content.scene ?? "general", source.provider, source.model, source.spec_id, source.revision, source.content_hash,
+    source.prompt_snapshot_id, source.skill_bundle_hash, assessment.passed ? "歌词结构门禁通过" : "歌词结构需人工复核", JSON.stringify(assessment), Date.now(),
+  );
+  for (const dimension of assessment.dimensions) {
+    await database.prepare(`
+      INSERT INTO evaluation_dimensions (report_id, dimension_key, label, score, threshold, verdict, evidence_json)
+      VALUES (?, ?, ?, ?, ?, ?, ?) ON CONFLICT(report_id, dimension_key) DO NOTHING
+    `).run(reportId, dimension.key, dimension.label, dimension.score, dimension.threshold, dimension.verdict, JSON.stringify(dimension.evidence));
+  }
   return reportId;
 }
 

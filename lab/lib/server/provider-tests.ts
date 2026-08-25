@@ -3,8 +3,8 @@ import "server-only";
 import { createHmac } from "node:crypto";
 import { callAiText } from "./ai";
 import { ApiError } from "./api";
-import { minimaxMusicEndpoint } from "./minimax";
-import { getProviderSettings, isMiniMaxReady } from "./settings";
+import { mockMarker } from "./mock-provider";
+import { getProviderSettings } from "./settings";
 
 export const PROVIDER_TEST_TARGETS = ["site", "qiniu", "feishu", "minimax", "ai"] as const;
 export type ProviderTestTarget = (typeof PROVIDER_TEST_TARGETS)[number];
@@ -13,6 +13,8 @@ export interface ProviderTestResult {
   ok: boolean;
   title: string;
   detail: string;
+  mock?: true;
+  provider?: "mock";
 }
 
 const TIMEOUT_MS = 20_000;
@@ -122,44 +124,13 @@ async function testFeishu(outer: AbortSignal): Promise<ProviderTestResult> {
   }
 }
 
-async function testMiniMax(outer: AbortSignal): Promise<ProviderTestResult> {
-  const settings = await getProviderSettings();
-  if (!await isMiniMaxReady(settings)) throw new ApiError(409, "请先保存 MiniMax API Key");
-  try {
-    // 故意发一个缺 prompt 的请求：只验证鉴权，不会真的生成音乐，也不消耗额度。
-    const response = await fetch(minimaxMusicEndpoint(settings.minimax.baseUrl), {
-      method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${settings.minimax.apiKey}` },
-      body: JSON.stringify({ model: settings.minimax.batchModel, prompt: "", stream: false }),
-      cache: "no-store",
-      signal: signal(outer),
-    });
-    const body = await response.json() as { base_resp?: { status_code?: number; status_msg?: string } };
-    const code = body.base_resp?.status_code;
-    const message = (body.base_resp?.status_msg ?? "").slice(0, 200);
-    // 只有明确是「参数被拒」才算鉴权通过；其余一律按未通过报，避免把无效 Key 说成可用。
-    const AUTH_PASSED = new Set([0, 1002, 1013, 2013, 1027]);
-    if (AUTH_PASSED.has(code ?? -1)) {
-      return {
-        ok: true,
-        title: "MiniMax API Key 鉴权通过",
-        detail: `${settings.minimax.baseUrl} 接受了这把 Key（探测返回 ${code}${message ? `：${message}` : ""}）。注意：模型权限要真正生成一次才知道，账号没开通该模型时会返回 2061。`,
-      };
-    }
-    if (code === 1008) {
-      return { ok: false, title: "MiniMax 账户余额不足", detail: message || "Key 有效，但账户不足以发起生成" };
-    }
-    if (code === 2061) {
-      return { ok: false, title: "MiniMax 账号未开通该模型", detail: `${message}；换一个批次模型，或到 MiniMax 控制台开通。` };
-    }
-    return {
-      ok: false,
-      title: "MiniMax 鉴权未通过",
-      detail: `${code ?? response.status}${message ? `：${message}` : ""}；当前接口域名 ${settings.minimax.baseUrl}，同一把 Key 换个域名（api.minimaxi.com / api.minimax.chat / api.minimax.io）结果可能不同`,
-    };
-  } catch (error) {
-    return { ok: false, title: "MiniMax 连通性测试失败", detail: failureText(error) };
-  }
+async function testMiniMax(_outer: AbortSignal): Promise<ProviderTestResult> {
+  return {
+    ok: true,
+    title: "Mock MiniMax provider 已就绪",
+    detail: "当前环境固定使用 mock/music-3.0-free；未发起网络请求，数据库全局速率限制为 3 RPM。",
+    ...mockMarker(),
+  };
 }
 
 const AI_PROTOCOL_TEXT = { chat: "Chat Completions", responses: "Responses" } as const;
@@ -179,12 +150,12 @@ async function testAi(outer: AbortSignal): Promise<ProviderTestResult> {
     });
     return {
       ok: true,
-      title: `${AI_PROTOCOL_TEXT[result.protocol]} 调用成功`,
-      detail: `${settings.model} 返回：${result.content.trim().slice(0, 80)}`,
+      title: "Mock AI provider 已就绪",
+      detail: `provider=${result.provider} · ${result.content.trim().slice(0, 80)}`,
+      ...mockMarker(),
     };
   } catch (error) {
-    if (error instanceof ApiError && error.status === 409) throw error;
-    return { ok: false, title: "AI 端点调用失败", detail: failureText(error) };
+    return { ok: false, title: "Mock AI provider 调用失败", detail: failureText(error), ...mockMarker() };
   }
 }
 

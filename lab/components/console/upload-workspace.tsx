@@ -9,7 +9,22 @@ import { THEME_SCENE_ITEMS, type ThemeScene } from "@/lib/theme-song";
 type RegionId = "z0" | "z1" | "z2" | "na0" | "as0";
 interface SongRow { id: string; originalName: string; mimeType: string; sizeBytes: number; status: string; analysisScene: ThemeScene; createdAt: number; uploadedBy: string }
 interface PendingUpload { id: string; name: string; progress: number; status: "waiting" | "uploading" | "done" | "error"; error?: string }
-interface UploadGrant { token: string; key: string; region: RegionId; privateBucket: boolean; error?: string }
+interface UploadGrant {
+  token: string;
+  key: string;
+  region: RegionId;
+  privateBucket: boolean;
+  resumable: {
+    enabled: boolean;
+    chunkSizeMB: number;
+    concurrentRequestLimit: number;
+    retryCount: number;
+    checkByMD5: boolean;
+    forceDirect: boolean;
+    localResumeTtlHours: number;
+  };
+  error?: string;
+}
 interface UploadResult { key: string; hash: string; fsize: number; mimeType: string }
 
 const REGION_BY_ID = {
@@ -60,9 +75,11 @@ export function UploadWorkspace({ canUpload, qiniuReady }: { canUpload: boolean;
       qiniu.upload(file, grant.key, grant.token, { fname: file.name, mimeType: file.type }, {
         region: REGION_BY_ID[grant.region],
         useCdnDomain: true,
-        concurrentRequestLimit: 2,
-        retryCount: 3,
-        chunkSize: 4,
+        concurrentRequestLimit: grant.resumable.concurrentRequestLimit,
+        retryCount: grant.resumable.retryCount,
+        chunkSize: grant.resumable.chunkSizeMB,
+        checkByMD5: grant.resumable.checkByMD5,
+        forceDirect: grant.resumable.forceDirect,
       }).subscribe({
         next(progress: { total: { percent: number } }) {
           updatePending(id, { progress: Math.round(progress.total.percent) });
@@ -99,18 +116,25 @@ export function UploadWorkspace({ canUpload, qiniuReady }: { canUpload: boolean;
     setPending(jobs.map(({ file, id }) => ({ id, name: file.name, progress: 0, status: "waiting" })));
     setBusy(true);
     let completed = 0;
-    for (const job of jobs) {
-      try {
-        await uploadFile(job.file, job.id);
-        completed += 1;
-      } catch (error) {
-        updatePending(job.id, { status: "error", error: error instanceof Error ? error.message : "上传失败" });
+    try {
+      for (const job of jobs) {
+        try {
+          await uploadFile(job.file, job.id);
+          completed += 1;
+        } catch (error) {
+          updatePending(job.id, { status: "error", error: error instanceof Error ? error.message : "上传失败" });
+        }
       }
+      try {
+        await loadSongs();
+      } catch (error) {
+        toast.error("刷新已入库文件失败", error instanceof Error ? error.message : "请稍后重试");
+      }
+      if (completed === jobs.length) toast.success(`${completed} 个文件已直传七牛并登记入库`);
+      else toast.error(`${completed}/${jobs.length} 个文件入库成功`, "失败项可重新选择上传");
+    } finally {
+      setBusy(false);
     }
-    await loadSongs();
-    setBusy(false);
-    if (completed === jobs.length) toast.success(`${completed} 个文件已直传七牛并登记入库`);
-    else toast.error(`${completed}/${jobs.length} 个文件入库成功`, "失败项可重新选择上传");
   }
 
   return (

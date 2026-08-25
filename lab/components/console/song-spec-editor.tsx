@@ -28,6 +28,11 @@ const NEW_SPEC_CONTENT: SongSpecContent = {
     prerequisites: [],
     contentRisk: "low",
   },
+  lyrics: {
+    style: { id: "general", version: 1 },
+    coreMemoryLine: "",
+    logicLinks: [],
+  },
   music: {
     tuning: { id: "general", version: 1 },
     durationSec: 90,

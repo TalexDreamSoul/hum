@@ -1,18 +1,27 @@
 import { NextResponse } from "next/server";
-import { apiErrorResponse, ApiError, requireApiUser } from "@/lib/server/api";
-import { getDb } from "@/lib/server/database";
-import { createQiniuObjectUrl } from "@/lib/server/qiniu";
+import { z } from "zod";
+import { apiErrorResponse, requireApiUser } from "@/lib/server/api";
+import { getSongMediaPreview } from "@/lib/server/media";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+const idInput = z.object({ id: z.string().uuid() });
+
 export async function GET(_request: Request, context: { params: Promise<{ id: string }> }) {
   try {
     await requireApiUser();
-    const { id } = await context.params;
-    const row = await getDb().prepare("SELECT object_key FROM songs WHERE id = ?").get(id) as { object_key: string } | undefined;
-    if (!row) throw new ApiError(404, "歌曲不存在");
-    return NextResponse.redirect(await createQiniuObjectUrl(row.object_key), 307);
+    const { id } = idInput.parse(await context.params);
+    const preview = await getSongMediaPreview(id);
+    if (preview.type === "metadata") {
+      return NextResponse.json(preview, {
+        headers: { "Cache-Control": "private, no-store, max-age=0" },
+      });
+    }
+    return NextResponse.redirect(preview.url, {
+      status: 307,
+      headers: { "Cache-Control": "private, no-store, max-age=0" },
+    });
   } catch (error) {
     return apiErrorResponse(error);
   }

@@ -16,7 +16,8 @@ export async function POST(request: Request) {
   try {
     const user = await requireApiUser(["admin", "uploader"]);
     const file = fileInput.parse(await request.json());
-    return NextResponse.json(await createQiniuUploadGrant(file, user.id));
+    const grant = await createQiniuUploadGrant(file, user.id);
+    return NextResponse.json(grant);
   } catch (error) {
     return apiErrorResponse(error);
   }

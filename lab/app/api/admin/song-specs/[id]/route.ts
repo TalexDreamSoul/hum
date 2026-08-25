@@ -24,8 +24,8 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     const user = await requireApiUser(["admin", "approver"]);
     const { id } = await context.params;
     const input = transitionInput.parse(await request.json());
-    if (input.action === "retire" && user.role !== "admin") {
-      return NextResponse.json({ error: "只有管理员可以退役 SongSpec" }, { status: 403 });
+    if ((input.action === "approve" || input.action === "retire") && user.role !== "admin") {
+      return NextResponse.json({ error: "只有管理员可以批准或退役 SongSpec" }, { status: 403 });
     }
     const songSpec = await transitionSongSpec(id, input.action, user.id);
     await recordAudit(user.id, `song_spec.${input.action}`, "song_spec", id, {

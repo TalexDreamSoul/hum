@@ -9,20 +9,29 @@ import { persistCandidateAudio } from "./candidates";
 import type { SceneKey } from "../analysis/score";
 import { getDb } from "./database";
 import type { JobTracker } from "./jobs";
-import { generateMiniMaxMusic, reserveMiniMaxRateLimit, type MiniMaxMusicRun } from "./minimax";
+import { generateMiniMaxLyrics, generateMiniMaxMusic, reserveMiniMaxRateLimit, type MiniMaxAudioSetting, type MiniMaxMusicRun } from "./minimax";
 import { SCENES } from "../analysis/score";
 import { getSongSpec, sha256, stableJson } from "./song-specs";
-import { buildSongSpecLyrics, buildSongSpecPrompt } from "../song-spec";
-import { MINIMAX_BATCH_MODELS, type MiniMaxBatchModel, type MiniMaxMusicModel } from "../minimax";
-import { getProviderSettings } from "./settings";
-import { saveCandidateEvaluation } from "./reports";
+import { buildSongSpecLyrics, buildSongSpecPrompt, evaluateLyricStructure } from "../song-spec";
+import type { MiniMaxMusicModel } from "../minimax";
+import { MOCK_MUSIC_MODEL, mockMarker } from "./mock-provider";
+import { saveCandidateEvaluation, saveCandidateLyricEvaluation } from "./reports";
 import { resolveSkills } from "./skills";
 import { dispatchPendingNotifications, enqueueNotificationEvent, type NotificationEvent } from "./notifications";
 
+const audioSettingSchema = z.object({
+  sampleRate: z.union([z.literal(16000), z.literal(24000), z.literal(32000), z.literal(44100)]),
+  bitrate: z.union([z.literal(32000), z.literal(64000), z.literal(128000), z.literal(256000)]),
+  format: z.enum(["mp3", "wav", "pcm"]),
+}).strict();
+
 export const createExperimentBatchSchema = z.object({
   specId: z.string().uuid(),
-  models: z.array(z.enum(MINIMAX_BATCH_MODELS)).min(1).max(MINIMAX_BATCH_MODELS.length).optional(),
-}).strict();
+  promptInstruction: z.string().trim().max(800).default(""),
+  lyricsInstruction: z.string().trim().max(800).default(""),
+  lyricsMode: z.enum(["spec", "minimax-edit"]).default("spec"),
+  audioSetting: audioSettingSchema.default({ sampleRate: 44100, bitrate: 256000, format: "mp3" }),
+}).strict();;
 
 export interface CandidateSummary {
   id: string;
@@ -170,13 +179,15 @@ async function runCandidate(input: {
   prompt: string;
   lyrics: string;
   scene: SceneKey;
+  targetDurationSec: number;
+  audioSetting: MiniMaxAudioSetting;
   signal: AbortSignal;
   job?: JobTracker;
 }): Promise<void> {
   const db = getDb();
   const started = Date.now();
   await db.prepare("UPDATE candidates SET status = 'generating', updated_at = ? WHERE id = ?").run(started, input.candidateId);
-  input.job?.step(`MiniMax 开始生成：${input.model}`, { candidateId: input.candidateId });
+  input.job?.step(`Mock provider 开始生成 WAV：${input.model}`, { candidateId: input.candidateId, ...mockMarker() });
   let run: MiniMaxMusicRun;
   try {
     run = await generateMiniMaxMusic({
@@ -185,6 +196,7 @@ async function runCandidate(input: {
       lyrics: input.lyrics,
       lyricsOptimizer: false,
       instrumental: false,
+      audioSetting: input.audioSetting,
       outputFormat: "hex",
       signal: input.signal,
       onExchange: (exchange) => {
@@ -238,7 +250,7 @@ async function runCandidate(input: {
       ],
     });
 
-    const assessment = await assessCandidateAudio(artifact.absolutePath, input.scene, artifact.probe, input.signal, input.lyrics);
+    const assessment = await assessCandidateAudio(artifact.absolutePath, input.scene, artifact.probe, input.signal, input.lyrics, input.targetDurationSec);
     const verdict = assessment.passed ? "pass" : "fail";
     const candidateStatus = assessment.passed ? "generated" : "rejected";
     const now = Date.now();
@@ -255,9 +267,11 @@ async function runCandidate(input: {
       artifact.outputHash,
       artifact.relativePath,
       run.latencyMs,
-      input.model.endsWith("-free") ? 0 : null,
+      0,
       assessment.passed ? "" : assessment.notes.slice(0, 500),
       stableJson({
+        ...mockMarker(),
+        sourceAudioFormat: "wav",
         master: master.applied ? { version: "hum-master-1", lufs: master.after.lufs, truePeak: master.after.truePeak } : null,
         traceId: run.traceId ?? null,
         durationMs: run.durationMs ?? null,
@@ -313,24 +327,41 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
   const parsed = createExperimentBatchSchema.parse(input);
   const spec = await getSongSpec(parsed.specId);
   if (spec.status !== "approved") throw new ApiError(409, "只有 approved SongSpec 可以创建实验批次");
-  const settings = await getProviderSettings();
-  const models = [...new Set<MiniMaxBatchModel>(parsed.models?.length ? parsed.models : [settings.minimax.batchModel])];
+  const models = [MOCK_MUSIC_MODEL] as const;
   const normalizedAudience = spec.content.audience.replace(/[–—至到]/g, "-");
   const ageBand = ["3-4", "5-6", "7-8", "9-12"].find((value) => normalizedAudience.includes(value)) ?? "";
   const skills = await resolveSkills({ purpose: "generation", domain: spec.content.domain, ageBand, scene: spec.content.scene });
 
   await reserveMiniMaxRateLimit(userId, models);
   job?.step(`规格已确认：${spec.content.title} v${spec.revision}`, { specKey: spec.specKey, models });
-  const prompt = buildSongSpecPrompt(spec.content);
-  const lyrics = buildSongSpecLyrics(spec.content);
-  const builderVersion = "hum-song-spec-prompt-2";
+  const prompt = [buildSongSpecPrompt(spec.content), parsed.promptInstruction].filter(Boolean).join("\n\n").slice(0, 2000);
+  let lyrics = buildSongSpecLyrics(spec.content);
+  if (parsed.lyricsMode === "minimax-edit") {
+    const edited = await generateMiniMaxLyrics({
+      title: spec.content.title,
+      lyrics,
+      instruction: parsed.lyricsInstruction || "在不改变事实、结构标签和每个句尾知识答案的前提下，润色为自然、儿童可唱的中文歌词。禁止无词填充。",
+      signal,
+    });
+    if (edited.lyrics.length > 3500 || spec.content.points.some((point) => !edited.lyrics.includes(point.answer))) {
+      throw new ApiError(422, "MiniMax 润色歌词遗漏了 SongSpec 知识答案，已拒绝使用");
+    }
+    lyrics = edited.lyrics;
+  }
+  const lyricAssessment = evaluateLyricStructure(spec.content, lyrics);
+  const builderVersion = "hum-song-spec-prompt-4";
   const promptRequest = {
-    provider: "minimax",
+    ...mockMarker(),
     scene: spec.content.scene,
     durationSec: spec.content.music.durationSec,
     bpm: spec.content.music.bpm,
     tuning: spec.content.music.tuning,
     requiredOutputs: spec.content.generation.requiredOutputs,
+    promptInstruction: parsed.promptInstruction,
+    lyricsInstruction: parsed.lyricsInstruction,
+    lyricsMode: parsed.lyricsMode,
+    audioSetting: parsed.audioSetting,
+    lyricAssessment,
     skills: skills.skills.map((skill) => ({ name: skill.name, revision: skill.revision, contentHash: skill.contentHash })),
   };
   const promptSnapshotHash = sha256(stableJson({
@@ -357,6 +388,12 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
     points: spec.content.points.map((point) => ({ lead: point.lead, answer: point.answer, cue: point.cue })),
   });
   job?.artifact("歌词", "text", "发给模型的歌词", { text: lyrics, language: spec.content.language });
+  job?.artifact("歌词评测", "fields", lyricAssessment.passed ? "歌词结构门禁通过" : "歌词结构需要人工复核", {
+    fields: [
+      { label: "总分", value: String(lyricAssessment.total) },
+      ...lyricAssessment.dimensions.map((dimension) => ({ label: dimension.label, value: `${dimension.score}/${dimension.threshold} · ${dimension.verdict === "pass" ? "通过" : "待改"}` })),
+    ],
+  });
   job?.artifact("提示词", "text", "发给模型的提示词", { text: prompt });
   const batchId = randomUUID();
   const proposedPromptSnapshotId = randomUUID();
@@ -364,7 +401,7 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
   const candidates = models.map((model) => ({
     id: randomUUID(),
     model,
-    inputHash: sha256(stableJson({ promptSnapshotHash, provider: "minimax", model })),
+    inputHash: sha256(stableJson({ promptSnapshotHash, model, ...mockMarker() })),
   }));
 
   const db = getDb();
@@ -406,7 +443,7 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
     `).run(
       batchId,
       spec.id,
-      stableJson({ provider: "minimax", models, specContentHash: spec.contentHash, promptSnapshotHash }),
+      stableJson({ models, specContentHash: spec.contentHash, promptSnapshotHash, ...mockMarker() }),
       null,
       userId,
       now,
@@ -417,7 +454,7 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
       INSERT INTO candidates (
         id, batch_id, spec_id, provider, model, model_version, seed, status,
         input_hash, cost_micros, created_at, updated_at, prompt_snapshot_id
-      ) VALUES (?, ?, ?, 'minimax', ?, 'provider-unversioned', NULL, 'pending', ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, 'mock', ?, 'mock-wav-1', NULL, 'pending', ?, 0, ?, ?, ?)
     `);
     for (const candidate of candidates) {
       await insertCandidate.run(
@@ -426,7 +463,6 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
         spec.id,
         candidate.model,
         candidate.inputHash,
-        candidate.model.endsWith("-free") ? 0 : null,
         now,
         now,
         promptSnapshotId,
@@ -434,6 +470,7 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
     }
   })();
 
+  await Promise.all(candidates.map((candidate) => saveCandidateLyricEvaluation(db, candidate.id, lyricAssessment)));
   job?.step(`同提示词批次已建，${candidates.length} 个模型候选进入生成队列`, { batchId, promptSnapshotId });
   await Promise.all(candidates.map((candidate) => runCandidate({
     candidateId: candidate.id,
@@ -441,6 +478,8 @@ export async function createExperimentBatch(input: unknown, userId: string, sign
     prompt,
     lyrics,
     scene: spec.content.scene,
+    targetDurationSec: spec.content.music.durationSec,
+    audioSetting: parsed.audioSetting,
     signal,
     job,
   })));

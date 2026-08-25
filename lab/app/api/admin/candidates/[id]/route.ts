@@ -26,8 +26,6 @@ export async function PATCH(request: Request, context: { params: Promise<{ id: s
     }
     const candidate = await actOnCandidate(id, input, user.id);
     await recordAudit(user.id, `candidate.${input.action}`, "candidate", id, {
-      reviewKind: input.action === "review" ? input.reviewKind : undefined,
-      verdict: input.action === "review" ? input.verdict : undefined,
       status: candidate.status,
       masterId: candidate.master && typeof candidate.master === "object" && "id" in candidate.master ? candidate.master.id : undefined,
     });

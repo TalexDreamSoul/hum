@@ -30,7 +30,6 @@ interface MusicRun {
   sampleRate?: number;
   bitrate?: number;
   sizeBytes?: number;
-  traceId?: string;
   error?: string;
 }
 
@@ -172,7 +171,7 @@ export function MusicLab({
       <Banner
         variant="default"
         title="测试结果不会自动入库"
-        description="MiniMax URL 约 24 小时后失效。确认质量后再做显式转存七牛与分析入队，避免把失败样本或付费结果直接写入内容库。"
+        description="Mock 音频仅以受管理员会话保护的同源临时地址试听，10 分钟后失效；不会写入 songs/candidates 或转存七牛。"
       />
 
       {runs.map((run) => (
@@ -199,7 +198,7 @@ export function MusicLab({
       ))}
 
       {expiresAt && runs.some((run) => run.ok) && (
-        <Text variant="secondary">临时结果预计在 {new Date(expiresAt).toLocaleString("zh-CN")} 前可访问。</Text>
+        <Text variant="secondary">临时试听将在 {new Date(expiresAt).toLocaleString("zh-CN")} 失效，访问需要管理员会话。</Text>
       )}
     </Grid>
   );

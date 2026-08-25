@@ -27,6 +27,7 @@ export interface NavItem {
   href: string;
   label: string;
   icon: Icon;
+  exact?: boolean;
 }
 
 export interface NavGroup {
@@ -34,8 +35,8 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-export function routeIsActive(pathname: string, href: string): boolean {
-  return href === "/" ? pathname === "/" : pathname.startsWith(href);
+export function routeIsActive(pathname: string, href: string, exact = false): boolean {
+  return pathname === href || (!exact && href !== "/" && pathname.startsWith(`${href}/`));
 }
 
 export function AppShell({
@@ -52,9 +53,13 @@ export function AppShell({
   identity?: { displayName: string; roleLabel: string };
   footer?: ReactNode;
 }) {
-  const currentPage = groups
+  const currentItem = groups
     .flatMap((group) => group.items)
-    .find((item) => routeIsActive(pathname, item.href))?.label ?? "hum";
+    .reduce<NavItem | undefined>((best, item) => {
+      if (!routeIsActive(pathname, item.href, item.exact)) return best;
+      return !best || item.href.length > best.href.length ? item : best;
+    }, undefined);
+  const currentPage = currentItem?.label ?? "hum";
 
   return (
     <LinkProvider component={KumoNextLink}>
@@ -71,7 +76,7 @@ export function AppShell({
                   <Sidebar.GroupLabel>{group.label}</Sidebar.GroupLabel>
                   <Sidebar.Menu>
                     {group.items.map((item) => {
-                      const active = routeIsActive(pathname, item.href);
+                      const active = item.href === currentItem?.href;
                       return (
                         <Sidebar.MenuButton
                           key={item.href}
@@ -94,7 +99,7 @@ export function AppShell({
               </Sidebar.Footer>
             )}
           </Sidebar>
-          <LayerCard render={<main />} className="min-h-screen">
+          <LayerCard render={<main />}>
             <LayerCard.Secondary>
               <Sidebar.Trigger aria-label="切换侧边导航" />
               <Text as="span" bold>{currentPage}</Text>

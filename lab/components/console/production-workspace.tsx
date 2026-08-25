@@ -7,7 +7,7 @@ import { ConsoleDrawer, ConsolePagination, ConsoleSection, pageSlice, useConsole
 import { DimensionRadar, ScoreTrend, type DimPoint } from "@/components/console/score-charts";
 import { SongSpecEditor } from "@/components/console/song-spec-editor";
 import { ThemeSongWizard } from "@/components/console/theme-song-wizard";
-import { MINIMAX_MUSIC_MODEL_LABELS, type MiniMaxBatchModel } from "@/lib/minimax";
+import { MINIMAX_MUSIC_MODEL_LABELS, type MiniMaxCurrentMusicModel } from "@/lib/minimax";
 import type { LyricLineTiming } from "@/lib/analysis/lyrics-timeline";
 import type { JobRecord } from "@/lib/jobs";
 import { productionRunStateOf } from "@/lib/production-run";
@@ -20,8 +20,6 @@ import type { StoredSongSpec } from "@/lib/server/song-specs";
 type CreationMode = "theme" | "spec";
 type RecordDetailStage = "spec" | "generation" | "review";
 type HistoryStage = "revisions" | "batches" | "candidates";
-type ReviewKind = "content" | "music";
-type ReviewVerdict = "pass" | "fail" | "needs_inpaint";
 type StageKey =
   | "planning"
   | "await_knowledge"
@@ -64,7 +62,7 @@ const STAGE_LABEL: Record<StageKey, string> = {
   ready: "待生成候选",
   failed: "生成失败",
   qc_failed: "质检未通过",
-  review: "待人工评审",
+  review: "待治理中心同轮双审",
   mastered: "已出母带",
   retired: "已退役",
 };
@@ -72,11 +70,6 @@ const STAGE_LABEL: Record<StageKey, string> = {
 const STAGE_ITEMS = [
   { value: "all", label: "全部" },
   ...(Object.keys(STAGE_LABEL) as StageKey[]).map((value) => ({ value, label: STAGE_LABEL[value] })),
-] as const;
-
-const REVIEW_KIND_ITEMS = [
-  { value: "content", label: "内容评审" },
-  { value: "music", label: "音乐评审" },
 ] as const;
 
 const REVIEW_VERDICT_ITEMS = [
@@ -178,9 +171,11 @@ const PHASE_STAGE: Record<string, StageKey> = {
   waiting_plan: "await_knowledge",
   queued_approval: "approving",
   running_approval: "approving",
+  waiting_approval: "approving",
   waiting_generation: "await_generation",
   queued_generation: "generating",
   running_generation: "generating",
+  waiting_human_review: "review",
 };
 
 function runStage(job: JobRecord): StageKey | null {
@@ -320,7 +315,7 @@ export function ProductionWorkspace({
   initialSongSpecs: StoredSongSpec[];
   initialBatches: ExperimentBatchSummary[];
   ai: { ready: boolean; model: string };
-  minimax: { ready: boolean; batchModel: MiniMaxBatchModel; requestsPerMinute: number };
+  minimax: { ready: boolean; defaultModel: MiniMaxCurrentMusicModel; enabledModels: MiniMaxCurrentMusicModel[]; requestsPerMinute: number };
 }) {
   const toast = useConsoleToast();
   const [songSpecs, setSongSpecs] = useState(initialSongSpecs);
@@ -339,8 +334,6 @@ export function ProductionWorkspace({
   const [historyStage, setHistoryStage] = useState<HistoryStage>("revisions");
   const [candidateDetail, setCandidateDetail] = useState<CandidateDetail | null>(null);
   const [candidateOpen, setCandidateOpen] = useState(false);
-  const [reviewKind, setReviewKind] = useState<ReviewKind>("content");
-  const [reviewVerdict, setReviewVerdict] = useState<ReviewVerdict>("pass");
   const [reviewNotes, setReviewNotes] = useState("");
   const [busy, setBusy] = useState("");
 
@@ -565,7 +558,7 @@ export function ProductionWorkspace({
     <Grid gap="base">
       <Banner
         variant={minimax.ready ? "default" : "alert"}
-        title={`${MINIMAX_MUSIC_MODEL_LABELS[minimax.batchModel]} · RPM ${minimax.requestsPerMinute} · 单次成本 0.0`}
+        title={`${minimax.enabledModels.map((model) => MINIMAX_MUSIC_MODEL_LABELS[model]).join(" / ")} · RPM ${minimax.requestsPerMinute}`}
         description={minimax.ready
           ? "生产批次由服务端使用后台配置的模型生成；浏览器不能覆盖模型或速率。"
           : "MiniMax API Key 尚未配置，仍可管理规格和评审历史，但不能生成候选。"}
@@ -645,7 +638,8 @@ export function ProductionWorkspace({
             <ThemeSongWizard
               ai={ai}
               minimaxReady={minimax.ready}
-              defaultModel={minimax.batchModel}
+              defaultModel={minimax.defaultModel}
+              availableModels={minimax.enabledModels}
               onSubmitted={(manualConfirmation) => finishCreation(
                 "创作任务已提交",
                 manualConfirmation
@@ -703,7 +697,7 @@ export function ProductionWorkspace({
                     {openRecord.latest.status === "draft" && (
                       <GridItem><Button disabled={Boolean(busy)} onClick={() => transitionSpec(openRecord.latest, "submit")}>提交规格审核</Button></GridItem>
                     )}
-                    {openRecord.latest.status === "spec_review" && (
+                    {openRecord.latest.status === "spec_review" && role === "admin" && (
                       <GridItem><Button disabled={Boolean(busy)} onClick={() => transitionSpec(openRecord.latest, "approve")}>批准规格</Button></GridItem>
                     )}
                     {openRecord.latest.status === "approved" && role === "admin" && (
@@ -949,17 +943,10 @@ export function ProductionWorkspace({
             {!candidateDetail.master && candidateDetail.status === "generated" && (
               <ConsoleSection title="人工评审">
                 <Grid gap="sm">
+                  <Banner variant="default" title="人工双审请前往治理工作台" description="内容与音乐评审必须在治理评审轮次中完成任务分配与提交；生产页不再直接写入评审结果。" />
+                  <LinkButton href="/console/governance">前往治理工作台</LinkButton>
+                  <InputArea label="候选处置说明" description="标记需要重绘或淘汰候选时必须说明原因。" value={reviewNotes} onValueChange={setReviewNotes} autoResize minRows={3} maxRows={8} />
                   <Grid variant="2up" gap="sm">
-                    <GridItem><Select label="评审类型" value={reviewKind} items={[...REVIEW_KIND_ITEMS]}
-                      onValueChange={(value: ReviewKind | null) => value && setReviewKind(value)}
-                      renderValue={(value: ReviewKind) => REVIEW_KIND_ITEMS.find((item) => item.value === value)?.label ?? value} /></GridItem>
-                    <GridItem><Select label="评审结论" value={reviewVerdict} items={[...REVIEW_VERDICT_ITEMS]}
-                      onValueChange={(value: ReviewVerdict | null) => value && setReviewVerdict(value)}
-                      renderValue={(value: ReviewVerdict) => REVIEW_VERDICT_ITEMS.find((item) => item.value === value)?.label ?? value} /></GridItem>
-                  </Grid>
-                  <InputArea label="评审说明" description="不通过、需要重绘或直接淘汰时必须说明原因。" value={reviewNotes} onValueChange={setReviewNotes} autoResize minRows={3} maxRows={8} />
-                  <Grid variant="2up" gap="sm">
-                    <GridItem><Button disabled={Boolean(busy)} onClick={() => actOnCandidate({ action: "review", reviewKind, verdict: reviewVerdict, notes: reviewNotes, scores: {} }, "人工评审已记录")}>提交评审</Button></GridItem>
                     <GridItem><Button variant="secondary" disabled={Boolean(busy) || !reviewNotes.trim()} onClick={() => actOnCandidate({ action: "needs_inpaint", notes: reviewNotes }, "候选已标记为需要重绘")}>需要重绘</Button></GridItem>
                     <GridItem><Button variant="secondary" disabled={Boolean(busy) || !reviewNotes.trim()} onClick={() => actOnCandidate({ action: "reject", notes: reviewNotes }, "候选已淘汰")}>淘汰候选</Button></GridItem>
                     {role === "admin" && <GridItem><Button disabled={Boolean(busy) || !canApproveMaster(candidateDetail)} onClick={() => actOnCandidate({ action: "approve_master" }, "候选已批准为唯一母带")}>批准母带</Button></GridItem>}
